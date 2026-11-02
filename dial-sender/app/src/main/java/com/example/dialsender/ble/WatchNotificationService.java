@@ -21,6 +21,7 @@ public class WatchNotificationService extends NotificationListenerService {
     }
 
 
+    private static final String TAG = "WatchNotif";
     private static final String PREF_NAME = "dial_sender_prefs";
     private static final String PREF_NOTIF_PACKAGES = "notif_enabled_packages";
     private static final int CATEGORY_CALL = 1;
@@ -28,6 +29,7 @@ public class WatchNotificationService extends NotificationListenerService {
 
     private SharedPreferences prefs;
     private Set<String> enabledPackages = new HashSet<>();
+    private String activeCallKey = null;
     private SharedPreferences.OnSharedPreferenceChangeListener prefListener;
 
     @Override
@@ -59,33 +61,67 @@ public class WatchNotificationService extends NotificationListenerService {
     public void onNotificationPosted(StatusBarNotification sbn) {
         if (sbn == null) return;
 
-        BleManager ble = BleManager.getInstance(getApplicationContext());
-        if (!ble.isSessionReady()) return;
-
         String pkg = sbn.getPackageName();
+        Notification n = sbn.getNotification();
+        android.util.Log.d(TAG, "posted pkg=" + pkg + " cat=" + n.category + " clearable=" + sbn.isClearable()
+                + " flags=0x" + Integer.toHexString(n.flags));
+
+        BleManager ble = BleManager.getInstance(getApplicationContext());
+        if (!ble.isSessionReady()) { android.util.Log.d(TAG, "drop: watch session not ready"); return; }
 
         // Skip our own notifications
         if (pkg.equals(getPackageName())) return;
 
         // Check whitelist
-        if (!enabledPackages.contains(pkg)) return;
+        if (!enabledPackages.contains(pkg)) { android.util.Log.d(TAG, "drop: not in whitelist " + enabledPackages); return; }
+
+        // Ringing calls (phone, WhatsApp, Telegram...) are ongoing, so they must
+        // be handled before the non-clearable filter below.
+        if (Notification.CATEGORY_CALL.equals(n.category)) {
+            if (!isRingingCall(n) || sbn.getKey().equals(activeCallKey)) { android.util.Log.d(TAG, "drop: call not ringing / already sent"); return; }
+            activeCallKey = sbn.getKey();
+            ble.sendNotification(CATEGORY_CALL, text(n.extras, Notification.EXTRA_TITLE), "", pkg);
+            return;
+        }
 
         // Skip ongoing/non-clearable notifications (service, media, navigation)
-        if (!sbn.isClearable()) return;
+        if (!sbn.isClearable()) { android.util.Log.d(TAG, "drop: not clearable"); return; }
 
         // Skip group summary notifications (no real content)
-        if ((sbn.getNotification().flags & Notification.FLAG_GROUP_SUMMARY) != 0) return;
+        if ((n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) { android.util.Log.d(TAG, "drop: group summary"); return; }
 
-        Notification notif = sbn.getNotification();
+        Notification notif = n;
         Bundle extras = notif.extras;
 
-        String title = extras.getString(NotificationCompat.EXTRA_TITLE, "");
-        CharSequence bigText = extras.getCharSequence(NotificationCompat.EXTRA_BIG_TEXT);
-        String content = bigText != null ? bigText.toString()
-                : extras.getString(NotificationCompat.EXTRA_TEXT, "");
+        // Apps like WhatsApp post styled CharSequences; getString() returns "" for those.
+        String title = text(extras, NotificationCompat.EXTRA_TITLE);
+        String bigText = text(extras, NotificationCompat.EXTRA_BIG_TEXT);
+        String content = !bigText.isEmpty() ? bigText : text(extras, NotificationCompat.EXTRA_TEXT);
 
         int category = Notification.CATEGORY_CALL.equals(notif.category) ? CATEGORY_CALL : CATEGORY_MESSAGE;
 
         ble.sendNotification(category, title, content, pkg);
+    }
+
+    @Override
+    public void onNotificationRemoved(StatusBarNotification sbn) {
+        if (sbn == null || activeCallKey == null || !activeCallKey.equals(sbn.getKey())) return;
+        activeCallKey = null;
+        BleManager ble = BleManager.getInstance(getApplicationContext());
+        ble.sendCallState(BleManager.CALL_IDLE);
+        ble.dismissCallNotification();
+    }
+
+    private static String text(Bundle extras, String key) {
+        CharSequence cs = extras.getCharSequence(key);
+        return cs == null ? "" : cs.toString();
+    }
+
+    /** Incoming, not an already-answered call (those show a running timer). */
+    private static boolean isRingingCall(Notification n) {
+        Bundle x = n.extras;
+        if (android.os.Build.VERSION.SDK_INT >= 31 && x.containsKey(Notification.EXTRA_CALL_TYPE))
+            return x.getInt(Notification.EXTRA_CALL_TYPE) == Notification.CallStyle.CALL_TYPE_INCOMING;
+        return !x.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false);
     }
 }

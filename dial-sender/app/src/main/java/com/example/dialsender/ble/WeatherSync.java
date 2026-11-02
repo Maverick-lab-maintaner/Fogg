@@ -116,7 +116,7 @@ public final class WeatherSync {
      * 3. the coordinates of the last successful weather fetch,
      * 4. a hardcoded fallback.
      */
-    private static double[] currentLocation(Context ctx) {
+    static double[] currentLocation(Context ctx) {
         try {
             if (hasLocationPermission(ctx)) {
                 Location fresh = requestFreshFix(ctx);

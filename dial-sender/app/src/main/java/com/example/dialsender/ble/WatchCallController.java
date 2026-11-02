@@ -99,6 +99,7 @@ public class WatchCallController implements BleManager.CallListener {
                 telephony.listen(legacyListener, PhoneStateListener.LISTEN_CALL_STATE);
             }
             ble.setCallListener(this);
+            startAppCallWatch();
             started = true;
             Log.d(TAG, "started");
         } catch (Exception e) {
@@ -119,6 +120,7 @@ public class WatchCallController implements BleManager.CallListener {
         } catch (Exception ignored) {
             // Already gone; nothing to unwind.
         }
+        stopAppCallWatch();
         ble.setCallListener(null);
         modernCallback = null;
         legacyListener = null;
@@ -161,6 +163,74 @@ public class WatchCallController implements BleManager.CallListener {
             default:
                 ble.sendCallState(BleManager.CALL_IDLE);
                 ble.dismissCallNotification();
+                break;
+        }
+    }
+
+    // ---- app (VoIP) calls -> watch ----
+    //
+    // MIUI withholds WhatsApp's call notifications from third-party listeners,
+    // and VoIP calls never reach TelephonyCallback. The audio mode still moves:
+    // RINGTONE while an app call rings, IN_COMMUNICATION once connected, NORMAL
+    // after — for every profile, dual apps included. The caller is not exposed.
+
+    private static final int APP_CALL_NONE = 0, APP_CALL_RINGING = 1, APP_CALL_ACTIVE = 2;
+    private int appCallState = APP_CALL_NONE;
+    private Object modeListener;   // AudioManager.OnModeChangedListener, API 31+
+    private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    private void startAppCallWatch() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || modeListener != null)
+            return;
+        android.media.AudioManager am = context.getSystemService(android.media.AudioManager.class);
+        android.media.AudioManager.OnModeChangedListener l =
+                // Telecom also sets RINGTONE for SIM calls; give TelephonyCallback
+                // a moment to report those so they are not pushed twice.
+                mode -> main.postDelayed(() -> onAudioMode(mode), 600);
+        am.addOnModeChangedListener(context.getMainExecutor(), l);
+        modeListener = l;
+    }
+
+    private void stopAppCallWatch() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || modeListener == null)
+            return;
+        context.getSystemService(android.media.AudioManager.class)
+                .removeOnModeChangedListener((android.media.AudioManager.OnModeChangedListener) modeListener);
+        modeListener = null;
+        appCallState = APP_CALL_NONE;
+    }
+
+    private void onAudioMode(int mode) {
+        if (lastState != TelephonyManager.CALL_STATE_IDLE)
+            return; // a SIM call owns the watch's call screen
+        switch (mode) {
+            case android.media.AudioManager.MODE_RINGTONE:
+                if (appCallState == APP_CALL_NONE) {
+                    appCallState = APP_CALL_RINGING;
+                    Log.d(TAG, "app call ringing");
+                    // The watch's call screen belongs to its Bluetooth hands-free
+                    // link and ignores pushed calls with no SIM call behind them,
+                    // so app calls go out as an alert (as HryFine shows them).
+                    // The ringing app is not exposed; WhatsApp is by far the usual one.
+                    ble.sendNotification(127, "WhatsApp", "Incoming call", "com.whatsapp");
+                }
+                break;
+            case android.media.AudioManager.MODE_IN_COMMUNICATION:
+                if (appCallState != APP_CALL_ACTIVE) {
+                    appCallState = APP_CALL_ACTIVE;
+                    Log.d(TAG, "app call active");
+                    ble.sendCallState(BleManager.CALL_ACTIVE);
+                }
+                break;
+            case android.media.AudioManager.MODE_NORMAL:
+                if (appCallState != APP_CALL_NONE) {
+                    appCallState = APP_CALL_NONE;
+                    Log.d(TAG, "app call ended");
+                    ble.sendCallState(BleManager.CALL_IDLE);
+                    ble.dismissCallNotification();
+                }
+                break;
+            default:
                 break;
         }
     }

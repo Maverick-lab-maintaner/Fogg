@@ -18,6 +18,7 @@ public class BootReceiver extends BroadcastReceiver {
                 && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
             return;
         }
+        PrayerScheduler.schedule(context.getApplicationContext());
         BleManager ble = BleManager.getInstance(context);
         if (ble.getVerifiedDeviceAddress() == null || !ble.isAutoConnectEnabled())
             return;

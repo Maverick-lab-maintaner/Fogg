@@ -75,10 +75,22 @@ public class BleManager {
         PRE_TRANSFER,
         SETUP1_SENT,
         SETUP2_SENT,
-        TRANSFERRING
+        TRANSFERRING,
+        HRY_READING,
+        HRY_VERIFY_SENT,
+        HRY_CONFIRM_SENT,
+        HRY_DEVINFO_SENT,
+        HRY_BIND_SENT
     }
 
     private ConnectionState connectionState = ConnectionState.DISCONNECTED;
+
+    // True when the peer exposes the ...dcca9f UART variant, which only
+    // HryFine-firmware watches use; they speak HryFineProtocol, not SMA.
+    private boolean hryMode = false;
+    private byte[] hryChallenge = null;
+    private static final long HRY_BIND_TIMEOUT_MS = 30000;
+    private static final String PREF_HRY_USER_ID = "hry_user_id";
     private final SharedPreferences prefs;
     private static final String PREF_NAME = "dial_sender_prefs";
 
@@ -901,6 +913,9 @@ public class BleManager {
                 if (service == null)
                     service = gatt.getService(BleUuids.SERVICE_ALT);
                 if (service != null) {
+                    hryMode = BleUuids.SERVICE_ALT.equals(service.getUuid());
+                    if (hryMode)
+                        log("HryFine UART variant detected — using HryFine protocol");
                     writeChar = service.getCharacteristic(BleUuids.WRITE_CHAR);
                     if (writeChar == null)
                         writeChar = service.getCharacteristic(BleUuids.WRITE_CHAR_ALT);
@@ -943,6 +958,10 @@ public class BleManager {
         @SuppressLint("MissingPermission")
         @Override
         public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+            if (hryOtaStep != HryOta.NONE) {
+                onHryOtaDescriptorWritten(status);
+                return;
+            }
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 log("Notifications enabled. Requesting MTU...");
                 gatt.requestMtu(512);
@@ -953,6 +972,14 @@ public class BleManager {
 
         @Override
         public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
+            if (hryOtaStep == HryOta.MTU) {
+                if (status == BluetoothGatt.GATT_SUCCESS)
+                    currentMtu = mtu - 3;
+                log("HryFine face: MTU " + mtu);
+                hryOtaStep = HryOta.NUS_OFF;
+                writeCccd(nusNotifyChar(), false);
+                return;
+            }
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 currentMtu = mtu - 3;
                 // Only a guess. DEVICE_INFO overrides it later in the handshake
@@ -960,7 +987,10 @@ public class BleManager {
                 // before that on every reconnect, so this resets cleanly.
                 ioBufferSize = 2 * currentMtu;
                 log("MTU changed to " + mtu + " (payload=" + currentMtu + ", chunkSize=" + ioBufferSize + ")");
-                sendHandshake();
+                if (hryMode)
+                    startHryReads(gatt);
+                else
+                    sendHandshake();
             } else {
                 log("ERROR: MTU change failed, status=" + status);
             }
@@ -969,6 +999,11 @@ public class BleManager {
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             byte[] data = characteristic.getValue();
+            if (data != null && HryFineProtocol.OTA_NOTIFY.equals(characteristic.getUuid())) {
+                byte[] copy = data.clone();
+                handler.post(() -> onHryOtaRx(copy));
+                return;
+            }
             if (data != null) {
                 log("Rx [" + data.length + "]: " + bytesToHex(data));
                 onRxChunk(data);
@@ -976,7 +1011,42 @@ public class BleManager {
         }
 
         @Override
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (!hryMode || connectionState != ConnectionState.HRY_READING)
+                return;
+            byte[] value = characteristic.getValue();
+            java.util.UUID uuid = characteristic.getUuid();
+            if (status != BluetoothGatt.GATT_SUCCESS || value == null) {
+                log("HryFine: read of " + uuid + " failed, status=" + status);
+                startHryLink(false, false);
+                return;
+            }
+            log("HryFine read " + uuid + ": " + bytesToHex(value));
+            if (HryFineProtocol.PROTOCOL_VERSION_CHAR.equals(uuid)) {
+                try {
+                    HryFineProtocol.protocolVersion = HryFineProtocol.parseProtocolVersion(
+                            new String(value, java.nio.charset.StandardCharsets.US_ASCII));
+                } catch (RuntimeException e) {
+                    log("HryFine: unparseable protocol version, keeping " + HryFineProtocol.protocolVersion);
+                }
+                log("HryFine protocol version=" + HryFineProtocol.protocolVersion);
+                if (!readHryChar(gatt, HryFineProtocol.FEATURES_CHAR))
+                    startHryLink(false, false);
+            } else if (HryFineProtocol.FEATURES_CHAR.equals(uuid)) {
+                boolean valid = value.length > 15 && value[0] == (byte) 0xAA;
+                boolean sdk = valid && (value[15] & 0x10) != 0;
+                boolean devInfo = valid && (value[15] & 0x20) != 0;
+                log("HryFine features: sdk=" + sdk + " deviceInfo=" + devInfo);
+                startHryLink(sdk, devInfo);
+            }
+        }
+
+        @Override
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (HryFineProtocol.OTA_WRITE.equals(characteristic.getUuid())) {
+                handler.post(() -> onHryOtaWritten(status));
+                return;
+            }
             handler.removeCallbacks(writeWatchdogRunnable);
             writeRetryCount = 0;
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -1004,24 +1074,99 @@ public class BleManager {
     }
 
     /**
-     * No SESSION CREATE reply. Drop the link so the existing back-off loop
-     * retries from a clean state instead of sitting on a connection that will
-     * never produce a session. Deliberately not treated as incompatibility: a
-     * missed reply is far more often a flaky link than the wrong hardware, and
-     * forgetting the watch over one silent handshake would be worse than the
-     * hang it replaces.
+     * No reply to whichever step we were waiting on.
+     *
+     * The fixed SESSION CREATE (mId=0xFFFFFFFF) is what the verified capture
+     * shows the real app sending, and it works unconditionally on every watch
+     * we have logs for — but a firmware that actually enforces binding has no
+     * reason to answer a login for an identity it never issued. On the first
+     * silent handshake we fall back to the real two-step flow documented in
+     * docs/SMA_BLE_PROTOCOL.md section 6 (IDENTITY/CREATE, then SESSION/CREATE
+     * with whatever mId the watch hands back) before giving up. Only a second
+     * silent step drops the link so the retry loop can start over.
      */
     private void handleHandshakeTimeout() {
-        if (connectionState != ConnectionState.HANDSHAKE_SENT)
+        if (connectionState == ConnectionState.HRY_READING) {
+            log("HryFine: version/feature reads timed out — binding directly");
+            startHryLink(false, false);
             return;
-        log("ERROR: no SESSION CREATE reply after " + HANDSHAKE_TIMEOUT_MS
-                + "ms — dropping the link so the retry loop can start over");
-        connectionState = ConnectionState.DISCONNECTED;
-        isConnected = false;
-        closeConnection(false);
-        notifyConnectionState(false, false);
-        if (autoReconnect && shouldReconnect())
-            setReconnecting(true);
+        }
+        if (connectionState == ConnectionState.HRY_DEVINFO_SENT) {
+            log("No HryFine device-info reply — binding anyway");
+            sendHryBind();
+            return;
+        }
+        if (connectionState == ConnectionState.HRY_VERIFY_SENT
+                || connectionState == ConnectionState.HRY_CONFIRM_SENT
+                || connectionState == ConnectionState.HRY_BIND_SENT) {
+            log("ERROR: no HryFine reply in " + connectionState + " — dropping the link");
+            connectionState = ConnectionState.DISCONNECTED;
+            isConnected = false;
+            closeConnection(false);
+            notifyConnectionState(false, false);
+            if (autoReconnect && shouldReconnect())
+                setReconnecting(true);
+            return;
+        }
+        if (connectionState == ConnectionState.HANDSHAKE_SENT) {
+            log("No SESSION CREATE reply after " + HANDSHAKE_TIMEOUT_MS
+                    + "ms — trying real IDENTITY/CREATE bind before giving up");
+            sendIdentityCreate();
+            return;
+        }
+        if (connectionState == ConnectionState.BIND_SENT || connectionState == ConnectionState.LOGIN_SENT) {
+            log("ERROR: no reply to " + connectionState + " after " + HANDSHAKE_TIMEOUT_MS
+                    + "ms — dropping the link so the retry loop can start over");
+            connectionState = ConnectionState.DISCONNECTED;
+            isConnected = false;
+            closeConnection(false);
+            notifyConnectionState(false, false);
+            if (autoReconnect && shouldReconnect())
+                setReconnecting(true);
+        }
+    }
+
+    /**
+     * Fallback bind step — IDENTITY/CREATE (cmd=0x03 key=0x01 flag=0x20) with a
+     * random 32-bit proposed ID, per docs/SMA_BLE_PROTOCOL.md section 6. The
+     * watch is expected to answer with its own mId, which we then use for a
+     * real SESSION/CREATE instead of the sentinel 0xFFFFFFFF.
+     */
+    private byte[] lastProposedIdentityId = null;
+
+    private void sendIdentityCreate() {
+        connectionState = ConnectionState.BIND_SENT;
+        int randomId = new java.util.Random().nextInt();
+        byte[] payload = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(randomId).array();
+        lastProposedIdentityId = payload;
+        log("Sending IDENTITY/CREATE, proposed id=0x" + String.format("%08X", randomId));
+        byte[] msg = createMessage((byte) 0x03, (byte) 0x01, (byte) 0x20, payload);
+        if (!isFileTransferActive)
+            commandQueue.clear();
+        packetsSent = 0;
+        enqueueLogicalFrame(msg);
+        isSending = true;
+        sendNextChunk();
+        handler.removeCallbacks(handshakeTimeoutRunnable);
+        handler.postDelayed(handshakeTimeoutRunnable, HANDSHAKE_TIMEOUT_MS);
+    }
+
+    /**
+     * Real login step — SESSION/CREATE with the mId the watch gave us in its
+     * IDENTITY/CREATE reply, instead of the fixed 0xFFFFFFFF sentinel.
+     */
+    private void sendSessionCreateWithId(byte[] mId) {
+        connectionState = ConnectionState.LOGIN_SENT;
+        log("Sending SESSION/CREATE with real id=" + bytesToHex(mId));
+        byte[] msg = createMessage((byte) 0x03, (byte) 0x02, (byte) 0x20, mId);
+        if (!isFileTransferActive)
+            commandQueue.clear();
+        packetsSent = 0;
+        enqueueLogicalFrame(msg);
+        isSending = true;
+        sendNextChunk();
+        handler.removeCallbacks(handshakeTimeoutRunnable);
+        handler.postDelayed(handshakeTimeoutRunnable, HANDSHAKE_TIMEOUT_MS);
     }
 
     /**
@@ -1031,6 +1176,612 @@ public class BleManager {
      * UI. This mirrors the verified capture, where the phone pushes TIME_ZONE +
      * TIME + HOUR_SYSTEM immediately after the handshake reply.
      */
+    // ========== HryFine protocol (ported from com.lianhezhuli.hyfit 3.8.25) ==========
+    // Connect sequence: F0 challenge -> watch echoes code -> F1 confirm ->
+    // F3 device info -> 03 bind (watch may ask the user to confirm) -> time sync.
+
+    private void sendHryFrame(byte[] frame, ConnectionState next, long timeoutMs) {
+        if (next != null) {
+            connectionState = next;
+            handler.removeCallbacks(handshakeTimeoutRunnable);
+            handler.postDelayed(handshakeTimeoutRunnable, timeoutMs);
+        }
+        enqueueLogicalFrame(frame);
+        flushQueue();
+    }
+
+    @SuppressLint("MissingPermission")
+    private boolean readHryChar(BluetoothGatt gatt, java.util.UUID charUuid) {
+        BluetoothGattService info = gatt.getService(HryFineProtocol.DEVICE_INFO_SERVICE);
+        BluetoothGattCharacteristic c = info == null ? null : info.getCharacteristic(charUuid);
+        return c != null && gatt.readCharacteristic(c);
+    }
+
+    /** Mirrors HryFine's MainActivity: protocol version (0x2A27), then feature bits (0x2A28). */
+    private void startHryReads(BluetoothGatt gatt) {
+        if (!isFileTransferActive)
+            commandQueue.clear();
+        isSending = false;
+        rxAssembly = null;
+        rxFilled = 0;
+        HryFineProtocol.protocolVersion = 1;
+        if (hryOtaStep != HryOta.NONE) {
+            handler.removeCallbacks(hryOtaTimeout);
+            hryOtaStep = HryOta.NONE;
+            hryPendingPar = null;
+            forEachListener(l -> l.onTransferFailed("connection dropped during transfer"));
+        }
+        hryFaceSettings = null;
+        healthKeyIndex = -1;
+        handler.removeCallbacks(healthTimeoutRunnable);
+        connectionState = ConnectionState.HRY_READING;
+        handler.removeCallbacks(handshakeTimeoutRunnable);
+        handler.postDelayed(handshakeTimeoutRunnable, HANDSHAKE_TIMEOUT_MS);
+        if (!readHryChar(gatt, HryFineProtocol.PROTOCOL_VERSION_CHAR)) {
+            log("HryFine: no protocol-version characteristic, assuming v1");
+            startHryLink(false, false);
+        }
+    }
+
+    /** HryFine's bind decision: SDK watches do the F0 challenge, others device-info or bind directly. */
+    private void startHryLink(boolean sdk, boolean devInfo) {
+        if (connectionState != ConnectionState.HRY_READING)
+            return;
+        if (sdk)
+            sendHryVerification();
+        else if (devInfo)
+            sendHryFrame(HryFineProtocol.frame(HryFineProtocol.CMD_DEVICE_INFO, (byte) 0, new byte[0]),
+                    ConnectionState.HRY_DEVINFO_SENT, 3000);
+        else
+            sendHryBind();
+    }
+
+    private void sendHryVerification() {
+        hryChallenge = HryFineProtocol.newChallenge();
+        log("HryFine: sending verification challenge");
+        sendHryFrame(HryFineProtocol.frame(HryFineProtocol.CMD_FIRMWARE_QUERY, (byte) 0, hryChallenge),
+                ConnectionState.HRY_VERIFY_SENT, HANDSHAKE_TIMEOUT_MS);
+    }
+
+    private void sendHryBind() {
+        String userId = prefs.getString(PREF_HRY_USER_ID, null);
+        if (userId == null) {
+            userId = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+            prefs.edit().putString(PREF_HRY_USER_ID, userId).apply();
+        }
+        log("HryFine: binding (confirm on the watch if it asks)");
+        sendHryFrame(HryFineProtocol.frame(HryFineProtocol.CMD_BIND, (byte) 0,
+                userId.getBytes(java.nio.charset.StandardCharsets.US_ASCII)),
+                ConnectionState.HRY_BIND_SENT, HRY_BIND_TIMEOUT_MS);
+    }
+
+    private void onHryRxChunk(byte[] data) {
+        if (rxAssembly != null) {
+            int take = Math.min(rxAssembly.length - rxFilled, data.length);
+            System.arraycopy(data, 0, rxAssembly, rxFilled, take);
+            rxFilled += take;
+            if (rxFilled < rxAssembly.length)
+                return;
+            byte[] complete = rxAssembly;
+            rxAssembly = null;
+            rxFilled = 0;
+            handler.removeCallbacks(rxAssemblyTimeout);
+            processHryFrame(complete);
+            if (take < data.length)
+                onHryRxChunk(Arrays.copyOfRange(data, take, data.length));
+            return;
+        }
+        if (data.length < 3)
+            return;
+        int frameLen;
+        if (data[0] == HryFineProtocol.ACK_HEADER) {
+            frameLen = 9;
+        } else if (data[0] == HryFineProtocol.DATA_HEADER) {
+            frameLen = (((data[1] & 0xFF) << 8) | (data[2] & 0xFF)) + 4;
+        } else {
+            log("HryFine: orphan chunk discarded");
+            return;
+        }
+        if (data.length >= frameLen) {
+            processHryFrame(Arrays.copyOfRange(data, 0, frameLen));
+            if (data.length > frameLen)
+                onHryRxChunk(Arrays.copyOfRange(data, frameLen, data.length));
+            return;
+        }
+        rxAssembly = new byte[frameLen];
+        System.arraycopy(data, 0, rxAssembly, 0, data.length);
+        rxFilled = data.length;
+        handler.removeCallbacks(rxAssemblyTimeout);
+        handler.postDelayed(rxAssemblyTimeout, RX_ASSEMBLY_TIMEOUT_MS);
+    }
+
+    private void processHryFrame(byte[] f) {
+        if (f[0] == HryFineProtocol.ACK_HEADER) {
+            if (f.length < 9)
+                return;
+            byte cmd = f[4];
+            boolean ok = (f[8] & 0xFF) == 1;
+            log("HryFine ack cmd=0x" + String.format("%02X", cmd) + " ok=" + ok);
+            if (cmd == HryFineProtocol.CMD_BIND && connectionState == ConnectionState.HRY_BIND_SENT) {
+                if (ok)
+                    onHrySessionReady();
+                else
+                    log("ERROR: watch rejected bind");
+            }
+            return;
+        }
+        if (f.length < 9 || !HryFineProtocol.checksumOk(f)) {
+            log("HryFine: bad frame/checksum, ignoring");
+            return;
+        }
+        byte cmd = f[4];
+        byte key = f[6];
+        sendHryFrame(HryFineProtocol.ack(cmd, key), null, 0);
+        log("HryFine data cmd=0x" + String.format("%02X", cmd) + " key=" + key + " state=" + connectionState);
+
+        if (cmd == HryFineProtocol.CMD_FIRMWARE_QUERY && connectionState == ConnectionState.HRY_VERIFY_SENT) {
+            int expected = HryFineProtocol.expectedChallengeCode(hryChallenge);
+            if (f.length > 10 && (f[10] & 0xFF) == expected) {
+                log("HryFine: verification OK");
+                sendHryFrame(HryFineProtocol.frame(HryFineProtocol.CMD_VERIFY_CONFIRM, (byte) 0, new byte[] { 0 }),
+                        ConnectionState.HRY_CONFIRM_SENT, HANDSHAKE_TIMEOUT_MS);
+            } else {
+                log("ERROR: HryFine verification code mismatch (expected 0x"
+                        + String.format("%02X", expected) + ")");
+            }
+        } else if (cmd == HryFineProtocol.CMD_VERIFY_CONFIRM && connectionState == ConnectionState.HRY_CONFIRM_SENT) {
+            sendHryFrame(HryFineProtocol.frame(HryFineProtocol.CMD_DEVICE_INFO, (byte) 0, new byte[0]),
+                    ConnectionState.HRY_DEVINFO_SENT, 3000);
+        } else if (cmd == HryFineProtocol.CMD_DEVICE_INFO && connectionState == ConnectionState.HRY_DEVINFO_SENT) {
+            try {
+                int vLen = f[9] & 0xFF;
+                String version = new String(f, 10, vLen, java.nio.charset.StandardCharsets.US_ASCII);
+                int nLen = f[10 + vLen] & 0xFF;
+                String name = new String(f, 11 + vLen, nLen, java.nio.charset.StandardCharsets.US_ASCII);
+                log("HryFine firmware=" + version + " project=" + name);
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{3})x(\\d{3})").matcher(name);
+                if (m.find()) {
+                    hryScreenW = Integer.parseInt(m.group(1));
+                    hryScreenH = Integer.parseInt(m.group(2));
+                }
+            } catch (RuntimeException e) {
+                log("HryFine: could not parse device info");
+            }
+            sendHryBind();
+        } else if (cmd == HryFineProtocol.CMD_WATCH_FACE) {
+            // The watch under-reports payloadLen on 0F 05 (says 11, sends 17);
+            // HryFine reads to the end of the frame, so do the same.
+            byte[] p = Arrays.copyOfRange(f, 9, f.length);
+            if (key == 5 && p.length >= 17) {
+                hryFaceSettings = Arrays.copyOf(p, 17);
+                log("HryFine custom face settings: " + bytesToHex(hryFaceSettings));
+                if (hryPendingPar != null && hryOtaStep == HryOta.ANNOUNCE)
+                    sendHryFrame(HryFineProtocol.customFaceWithNewBackground(hryFaceSettings, hryPendingStyle), null, 0);
+            } else if (key == 6 && p.length > 0 && p[0] == 1 && hryOtaStep == HryOta.ANNOUNCE) {
+                startHryOta();
+            }
+        } else if (cmd == HryFineProtocol.CMD_HEALTH) {
+            int plen = ((f[7] & 0xFF) << 8) | (f[8] & 0xFF);
+            onHryHealthFrame(key & 0xFF, Arrays.copyOfRange(f, 9, Math.min(f.length, 9 + plen)));
+        } else if (cmd == HryFineProtocol.CMD_BIND && key == 1 && connectionState == ConnectionState.HRY_BIND_SENT) {
+            if (f.length > 9 && f[9] == 1) {
+                log("HryFine: bind confirmed on watch");
+                sendHryBind();
+            } else {
+                log("ERROR: bind refused on the watch");
+            }
+        }
+    }
+
+    // ---- Custom watch face: PAR background over the 0xFF00 transfer service ----
+
+    private enum HryOta { NONE, ANNOUNCE, MTU, NUS_OFF, OTA_ON, STARTED, SENDING, FINAL, RESTORE_OTA, RESTORE_NUS }
+
+    private HryOta hryOtaStep = HryOta.NONE;
+    private byte[] hryFaceSettings = null;
+    private byte[] hryPendingPar = null;
+    private int hryScreenW = 240, hryScreenH = 286;
+    private int hryPacketSize = 20, hryGroupSize = 1, hryOffset = 0, hryInGroup = 0;
+    private int hryGroupCrc = 0, hryFileCrc = 0;
+    private boolean hryOtaOk = false;
+    private String hryOtaError = null;
+    private byte[] hryOtaRx = null;
+    private int hryOtaRxFilled = 0;
+    private static final long HRY_OTA_TIMEOUT_MS = 30000;
+    // The watch states how long it may take (start reply byte 13, 5 s units); flashing a dial needs ~100 s.
+    private long hryOtaWaitMs = HRY_OTA_TIMEOUT_MS;
+    private final Runnable hryOtaTimeout = () -> finishHryOta(false, "watch stopped responding");
+
+    public boolean isHryFine() {
+        return hryMode && isSessionReady();
+    }
+
+    public int[] getHryScreenSize() {
+        return new int[] { hryScreenW, hryScreenH };
+    }
+
+    private int[] hryPendingStyle = null;
+    private byte hryOtaType = HryFineProtocol.OTA_TYPE_PAPER;
+
+    /**
+     * Install a compiled HryFine dial (.bin as distributed: base64 with three
+     * MD5 tokens standing in for '=', '+', '/'; raw binary is accepted too).
+     * Dials go straight over the transfer service as type 5, no announce step.
+     */
+    public void sendHryDialFile(byte[] file) {
+        handler.post(() -> {
+            if (!isHryFine() || hryOtaStep != HryOta.NONE) {
+                forEachListener(l -> l.onTransferFailed(hryOtaStep != HryOta.NONE ? "transfer already running" : "not connected"));
+                return;
+            }
+            byte[] dial = HryFineProtocol.decodeDialFile(file);
+            if (dial == null || dial.length == 0) {
+                forEachListener(l -> l.onTransferFailed("not a HryFine dial file"));
+                return;
+            }
+            log("HryFine dial file: " + dial.length + " bytes");
+            hryPendingPar = dial;
+            hryPendingStyle = null;
+            hryOtaType = HryFineProtocol.OTA_TYPE_DIAL;
+            handler.removeCallbacks(hryOtaTimeout);
+            handler.postDelayed(hryOtaTimeout, HRY_OTA_TIMEOUT_MS);
+            startHryOta();
+        });
+    }
+
+    /** Send a design as the watch's custom-face background; the watch draws the time on top. */
+    public void sendHryCustomFace(android.graphics.Bitmap design) {
+        sendHryCustomFace(design, null);
+    }
+
+    /** style = {timeX, timeY, colorRGB565, above, below} (see HryFaces), null keeps the watch's. */
+    public void sendHryCustomFace(android.graphics.Bitmap design, int[] style) {
+        handler.post(() -> {
+            if (!isHryFine() || hryOtaStep != HryOta.NONE) {
+                forEachListener(l -> l.onTransferFailed(hryOtaStep != HryOta.NONE ? "transfer already running" : "not connected"));
+                return;
+            }
+            if (!ParEncoder.isAvailable()) {
+                forEachListener(l -> l.onTransferFailed("image encoder unavailable on this phone"));
+                return;
+            }
+            android.graphics.Bitmap ready = HryImage.prepare(design, hryScreenW, hryScreenH, false);
+            byte[] par = ParEncoder.bitmapToPar(ready);
+            if (par == null || par.length == 0) {
+                forEachListener(l -> l.onTransferFailed("could not encode image"));
+                return;
+            }
+            log("HryFine face: " + hryScreenW + "x" + hryScreenH + " PAR " + par.length + " bytes");
+            hryPendingPar = par;
+            hryPendingStyle = style;
+            hryOtaType = HryFineProtocol.OTA_TYPE_PAPER;
+            hryOtaStep = HryOta.ANNOUNCE;
+            handler.removeCallbacks(hryOtaTimeout);
+            handler.postDelayed(hryOtaTimeout, HRY_OTA_TIMEOUT_MS);
+            if (hryFaceSettings != null)
+                sendHryFrame(HryFineProtocol.customFaceWithNewBackground(hryFaceSettings, hryPendingStyle), null, 0);
+            else
+                sendHryFrame(HryFineProtocol.requestCustomFace(), null, 0);
+        });
+    }
+
+    private BluetoothGattCharacteristic nusNotifyChar() {
+        BluetoothGatt g = bluetoothGatt;
+        BluetoothGattService s = g == null ? null : g.getService(BleUuids.SERVICE_ALT);
+        return s == null ? null : s.getCharacteristic(BleUuids.NOTIFY_CHAR_ALT);
+    }
+
+    private BluetoothGattCharacteristic otaChar(java.util.UUID uuid) {
+        BluetoothGatt g = bluetoothGatt;
+        BluetoothGattService s = g == null ? null : g.getService(HryFineProtocol.OTA_SERVICE);
+        return s == null ? null : s.getCharacteristic(uuid);
+    }
+
+    @SuppressLint("MissingPermission")
+    private void writeCccd(BluetoothGattCharacteristic c, boolean enable) {
+        BluetoothGatt g = bluetoothGatt;
+        BluetoothGattDescriptor d = c == null ? null : c.getDescriptor(BleUuids.CCCD);
+        boolean ok = g != null && d != null;
+        if (ok) {
+            g.setCharacteristicNotification(c, enable);
+            d.setValue(enable ? BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    : BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE);
+            ok = g.writeDescriptor(d);
+        }
+        if (ok)
+            return;
+        if (hryOtaStep == HryOta.RESTORE_OTA || hryOtaStep == HryOta.RESTORE_NUS)
+            completeHryOta();
+        else
+            finishHryOta(false, "could not switch the watch's transfer channel");
+    }
+
+    @SuppressLint("MissingPermission")
+    private void startHryOta() {
+        log("HryFine face: watch ready, opening transfer channel");
+        hryOtaWaitMs = HRY_OTA_TIMEOUT_MS;
+        hryOtaStep = HryOta.MTU;
+        if (bluetoothGatt == null || !bluetoothGatt.requestMtu(185))
+            finishHryOta(false, "MTU request failed");
+    }
+
+    private void onHryOtaDescriptorWritten(int status) {
+        switch (hryOtaStep) {
+            case NUS_OFF:
+                hryOtaStep = HryOta.OTA_ON;
+                writeCccd(otaChar(HryFineProtocol.OTA_NOTIFY), true);
+                break;
+            case OTA_ON:
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    finishHryOta(false, "transfer channel refused");
+                    return;
+                }
+                hryOtaStep = HryOta.STARTED;
+                log("HryFine face: start, " + hryPendingPar.length + " bytes");
+                writeOta(HryFineProtocol.otaStart(hryOtaType, currentMtu, hryPendingPar.length));
+                break;
+            case RESTORE_OTA:
+                hryOtaStep = HryOta.RESTORE_NUS;
+                writeCccd(nusNotifyChar(), true);
+                break;
+            case RESTORE_NUS:
+                completeHryOta();
+                break;
+            default:
+                break;
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private void writeOta(byte[] data) {
+        BluetoothGattCharacteristic c = otaChar(HryFineProtocol.OTA_WRITE);
+        if (c == null || bluetoothGatt == null) {
+            finishHryOta(false, "watch transfer channel missing");
+            return;
+        }
+        handler.removeCallbacks(hryOtaTimeout);
+        handler.postDelayed(hryOtaTimeout, hryOtaWaitMs);
+        c.setValue(data);
+        c.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+        if (!bluetoothGatt.writeCharacteristic(c))
+            handler.postDelayed(() -> {
+                if (hryOtaStep == HryOta.SENDING || hryOtaStep == HryOta.STARTED || hryOtaStep == HryOta.FINAL)
+                    writeOta(data);
+            }, 30);
+    }
+
+    /** Data packets flow one per write callback; a group ends with its CRC frame. */
+    private void onHryOtaWritten(int status) {
+        if (hryOtaStep != HryOta.SENDING || hryInGroup < 0)
+            return;
+        if (hryInGroup >= hryGroupSize || hryOffset >= hryPendingPar.length) {
+            hryInGroup = -1; // wait for the watch to accept the group
+            writeOta(HryFineProtocol.otaCommand(hryOtaType, HryFineProtocol.OTA_GROUP_CRC,
+                    new byte[] { (byte) hryGroupCrc }));
+            return;
+        }
+        int chunk = Math.min(hryPacketSize - 1, hryPendingPar.length - hryOffset);
+        byte[] data = Arrays.copyOfRange(hryPendingPar, hryOffset, hryOffset + chunk);
+        hryGroupCrc = HryFineProtocol.crc8(hryGroupCrc, data);
+        hryFileCrc = HryFineProtocol.crc8(hryFileCrc, data);
+        hryOffset += chunk;
+        hryInGroup++;
+        byte[] pkt = new byte[chunk + 1];
+        pkt[0] = HryFineProtocol.OTA_DATA;
+        System.arraycopy(data, 0, pkt, 1, chunk);
+        writeOta(pkt);
+        final int done = hryOffset, total = hryPendingPar.length;
+        forEachListener(l -> l.onTransferProgress((int) (done * 100L / total), done, total));
+    }
+
+    private void startHryGroup() {
+        hryInGroup = 0;
+        hryGroupCrc = 0;
+        hryOtaStep = HryOta.SENDING;
+        onHryOtaWritten(BluetoothGatt.GATT_SUCCESS);
+    }
+
+    private void onHryOtaRx(byte[] data) {
+        if (hryOtaStep == HryOta.NONE)
+            return;
+        log("HryFine face rx: " + bytesToHex(data));
+        if (hryOtaRx == null) {
+            if (data[0] == HryFineProtocol.OTA_DATA) {
+                finishHryOta(false, "watch reported a transfer error");
+                return;
+            }
+            if (data[0] != HryFineProtocol.OTA_HEADER || data.length < 8)
+                return;
+            hryOtaRx = new byte[(((data[6] & 0xFF) << 8) | (data[7] & 0xFF)) + 9];
+            hryOtaRxFilled = 0;
+        }
+        int take = Math.min(data.length, hryOtaRx.length - hryOtaRxFilled);
+        System.arraycopy(data, 0, hryOtaRx, hryOtaRxFilled, take);
+        hryOtaRxFilled += take;
+        if (hryOtaRxFilled < hryOtaRx.length)
+            return;
+        byte[] r = hryOtaRx;
+        hryOtaRx = null;
+        int step = r[3] & 0xFF;
+        int status = r[5] & 0xFF;
+        if (step == 0x81) {
+            if (r.length < 14) {
+                finishHryOta(false, status == 13 ? "image too large for the watch" : "watch refused the transfer");
+                return;
+            }
+            hryPacketSize = Math.max(2, Math.min(((r[8] & 0xFF) << 8) | (r[9] & 0xFF), currentMtu));
+            hryGroupSize = Math.max(1, r[12] & 0xFF);
+            hryOtaWaitMs = Math.max(HRY_OTA_TIMEOUT_MS, (r[13] & 0xFF) * 5000L);
+            hryOffset = 0;
+            hryFileCrc = 0;
+            log("HryFine face: packet=" + hryPacketSize + " group=" + hryGroupSize);
+            startHryGroup();
+        } else if (step == 0x82) {
+            if (status != 0) {
+                finishHryOta(false, "watch rejected a block (CRC)");
+            } else if (hryOffset >= hryPendingPar.length) {
+                hryOtaStep = HryOta.FINAL;
+                writeOta(HryFineProtocol.otaCommand(hryOtaType, HryFineProtocol.OTA_FILE_CRC,
+                        new byte[] { (byte) hryFileCrc }));
+            } else {
+                startHryGroup();
+            }
+        } else if (step == 0x83) {
+            finishHryOta(status == 0, status == 0 ? null : "watch rejected the file (CRC)");
+        }
+    }
+
+    /** Restore the normal channel (OTA notify off, UART notify on), then report. */
+    private void finishHryOta(boolean ok, String error) {
+        if (hryOtaStep == HryOta.NONE || hryOtaStep == HryOta.RESTORE_OTA || hryOtaStep == HryOta.RESTORE_NUS)
+            return;
+        handler.removeCallbacks(hryOtaTimeout);
+        log("HryFine face: " + (ok ? "done" : "failed: " + error));
+        hryOtaOk = ok;
+        hryOtaError = error;
+        boolean channelTouched = hryOtaStep.ordinal() >= HryOta.NUS_OFF.ordinal();
+        hryPendingPar = null;
+        if (!channelTouched || bluetoothGatt == null) {
+            completeHryOta();
+            return;
+        }
+        hryOtaStep = HryOta.RESTORE_OTA;
+        BluetoothGattCharacteristic ota = otaChar(HryFineProtocol.OTA_NOTIFY);
+        if (ota == null) {
+            hryOtaStep = HryOta.RESTORE_NUS;
+            writeCccd(nusNotifyChar(), true);
+        } else {
+            writeCccd(ota, false);
+        }
+    }
+
+    private void completeHryOta() {
+        hryOtaStep = HryOta.NONE;
+        hryOtaRx = null;
+        if (hryOtaOk && hryFaceSettings != null)
+            hryFaceSettings = HryFineProtocol.applyFaceStyle(hryFaceSettings, hryPendingStyle);
+        hryPendingStyle = null;
+        if (hryOtaOk)
+            forEachListener(BleStateListener::onTransferComplete);
+        else {
+            String e = hryOtaError;
+            forEachListener(l -> l.onTransferFailed(e));
+        }
+    }
+
+    private void onHryHealthFrame(int key, byte[] p) {
+        log("HryFine health key=" + key + " payload=" + bytesToHex(p));
+        if (healthKeyIndex >= 0) {
+            handler.removeCallbacks(healthTimeoutRunnable);
+            handler.postDelayed(healthTimeoutRunnable, HEALTH_RESPONSE_TIMEOUT_MS);
+        }
+        long now = System.currentTimeMillis() / 1000L;
+        try {
+            switch (key) {
+                case HryFineProtocol.HEALTH_STEPS: {
+                    java.util.List<java.util.List<String>> a = HryFineProtocol.decodeSteps(p, now);
+                    storeHrySeries("steps", a.get(0));
+                    storeHrySeries("calories", a.get(1));
+                    storeHrySeries("distance", a.get(2));
+                    break;
+                }
+                case HryFineProtocol.HEALTH_HEART_RATE:
+                    storeHrySeries("heart_rate", HryFineProtocol.decodeHeartRate(p));
+                    break;
+                case HryFineProtocol.HEALTH_BLOOD_PRESSURE:
+                    storeHrySeries("blood_pressure", HryFineProtocol.decodeBloodPressure(p));
+                    break;
+                case HryFineProtocol.HEALTH_SPO2:
+                    storeHrySeries("blood_oxygen", HryFineProtocol.decodeSpo2(p));
+                    break;
+                case HryFineProtocol.HEALTH_SLEEP: {
+                    java.util.List<String> night = HryFineProtocol.decodeSleep(p);
+                    if (!night.isEmpty()) {
+                        // One summary per date: drop that night's earlier copy first.
+                        long day = HryFineProtocol.dayStart(p, 0);
+                        dropHryRecords("sleep", day - 14 * 3600L, day + 14 * 3600L);
+                    }
+                    storeHrySeries("sleep", night);
+                    break;
+                }
+                case HryFineProtocol.HEALTH_LIVE_TOTAL: {
+                    int[] t = HryFineProtocol.decodeLiveTotal(p);
+                    if (t != null) {
+                        storeHrySeries("steps", java.util.Collections.singletonList(now + ":" + t[0]));
+                        storeHrySeries("calories", java.util.Collections.singletonList(now + ":" + t[1]));
+                        storeHrySeries("distance", java.util.Collections.singletonList(now + ":" + t[2]));
+                    }
+                    break;
+                }
+                case HryFineProtocol.HEALTH_SYNC_END:
+                    if (healthKeyIndex >= 0)
+                        finishHryHealthSync();
+                    break;
+                default:
+                    break;
+            }
+        } catch (RuntimeException e) {
+            log("HryFine health key=" + key + ": decode failed (" + e + ")");
+        }
+    }
+
+    private void dropHryRecords(String name, long from, long to) {
+        String raw = prefs.getString("health_" + name, "");
+        if (raw.isEmpty())
+            return;
+        StringBuilder kept = new StringBuilder();
+        for (String rec : raw.split(",")) {
+            long ts;
+            try {
+                ts = Long.parseLong(rec.substring(0, rec.indexOf(':')));
+            } catch (RuntimeException e) {
+                continue;
+            }
+            if (ts >= from && ts < to)
+                continue;
+            if (kept.length() > 0)
+                kept.append(",");
+            kept.append(rec);
+        }
+        prefs.edit().putString("health_" + name, kept.toString()).commit();
+    }
+
+    private void storeHrySeries(String name, java.util.List<String> records) {
+        if (records.isEmpty())
+            return;
+        StringBuilder sb = new StringBuilder(prefs.getString("health_" + name, ""));
+        for (String r : records) {
+            if (sb.length() > 0)
+                sb.append(",");
+            sb.append(r);
+        }
+        prefs.edit().putString("health_" + name, dedupeSeries(sb.toString())).apply();
+        log("  HryFine " + name + ": +" + records.size() + " " + records);
+    }
+
+    private void finishHryHealthSync() {
+        healthKeyIndex = -1;
+        handler.removeCallbacks(healthTimeoutRunnable);
+        log("=== Health Sync Complete (HryFine) ===");
+        prefs.edit().putLong("last_sync_time", System.currentTimeMillis() / 1000L).apply();
+        sendHryFrame(HryFineProtocol.liveSteps(true), null, 0);
+        forEachListener(BleStateListener::onHealthSyncComplete);
+    }
+
+    private void onHrySessionReady() {
+        connectionState = ConnectionState.SESSION_READY;
+        handler.removeCallbacks(handshakeTimeoutRunnable);
+        log("=== SESSION READY (HryFine) ===");
+        BluetoothGatt gatt = bluetoothGatt;
+        if (gatt != null)
+            rememberVerifiedDevice(gatt.getDevice());
+        notifyConnectionState(true, true);
+        handler.postDelayed(() -> sendHryFrame(HryFineProtocol.frame(HryFineProtocol.CMD_SETTING, (byte) 1,
+                HryFineProtocol.timePayload(java.util.Calendar.getInstance())), null, 0), 500);
+        handler.postDelayed(() -> sendHryFrame(HryFineProtocol.requestCustomFace(), null, 0), 1200);
+        handler.postDelayed(() -> PrayerScheduler.onWatchConnected(context), 4000);
+    }
+
     private void onSessionReady() {
         connectionState = ConnectionState.SESSION_READY;
         handler.removeCallbacks(handshakeTimeoutRunnable);
@@ -1063,6 +1814,10 @@ public class BleManager {
      * stopped seeing anything newer than the middle of the first page.
      */
     private void onRxChunk(byte[] data) {
+        if (hryMode) {
+            onHryRxChunk(data);
+            return;
+        }
         if (rxAssembly != null) {
             int need = rxAssembly.length - rxFilled;
             int take = Math.min(need, data.length);
@@ -1148,10 +1903,29 @@ public class BleManager {
         // (cmd=0x03 key=0x02 flag=0x20, data=FFFFFFFF) and proceeds straight into
         // its config sequence as soon as the watch replies. So the reply to the
         // handshake *is* the session being established.
-        if (isReply && connectionState == ConnectionState.HANDSHAKE_SENT
+        //
+        // connectionState == LOGIN_SENT covers the fallback path: a firmware that
+        // ignored the sentinel SESSION CREATE but answered a real IDENTITY/CREATE
+        // bind (see handleHandshakeTimeout / sendIdentityCreate below).
+        if (isReply && (connectionState == ConnectionState.HANDSHAKE_SENT
+                || connectionState == ConnectionState.LOGIN_SENT)
                 && cmd == 0x03 && key == 0x02) {
             log("SESSION CREATE OK");
             onSessionReady();
+            return;
+        }
+
+        // IDENTITY/CREATE ACK — reply to the fallback bind step. Per
+        // docs/SMA_BLE_PROTOCOL.md section 6 the watch answers with its own mId
+        // (first 4 bytes, little-endian); fall back to the id we proposed if the
+        // payload is too short to hold one.
+        if (isReply && connectionState == ConnectionState.BIND_SENT
+                && cmd == 0x03 && key == 0x01) {
+            byte[] payload = Arrays.copyOfRange(data, 9, data.length);
+            log("IDENTITY CREATE OK, payload=" + bytesToHex(payload));
+            byte[] mId = (payload.length >= 4) ? Arrays.copyOfRange(payload, 0, 4) : lastProposedIdentityId;
+            connectionState = ConnectionState.BIND_OK;
+            sendSessionCreateWithId(mId);
             return;
         }
 
@@ -1686,6 +2460,11 @@ public class BleManager {
             log("No file data to send");
             return;
         }
+        if (hryMode) {
+            log("SMA dial files cannot be installed on a HryFine watch");
+            forEachListener(l -> l.onTransferFailed("this watch only takes faces made in the dial editor"));
+            return;
+        }
 
         this.fileBytesToSend = fileData;
         this.fileTotalSize = fileData.length;
@@ -1935,6 +2714,14 @@ public class BleManager {
             log("Health sync already in progress (key index " + healthKeyIndex + ") — ignoring");
             return;
         }
+        if (hryMode) {
+            log("=== Syncing Health Data (HryFine) ===");
+            healthKeyIndex = 0;
+            handler.removeCallbacks(healthTimeoutRunnable);
+            handler.postDelayed(healthTimeoutRunnable, HEALTH_RESPONSE_TIMEOUT_MS);
+            sendHryFrame(HryFineProtocol.syncAllHistory(), null, 0);
+            return;
+        }
         activeHealthKeys = resolveHealthKeys();
         log("=== Syncing Health Data (" + activeHealthKeys.length + " keys) ===");
         healthKeyIndex = 0;
@@ -2049,6 +2836,11 @@ public class BleManager {
     private void onHealthTimeout() {
         if (healthKeyIndex < 0)
             return;
+        if (hryMode) {
+            log("HryFine health: watch went quiet — finishing sync");
+            finishHryHealthSync();
+            return;
+        }
         int key = activeHealthKeys[Math.min(healthKeyIndex, activeHealthKeys.length - 1)];
         log("Health [" + getHealthKeyName(key) + "]: no reply in " + HEALTH_RESPONSE_TIMEOUT_MS + "ms — skipping key");
         nextHealthKey();
@@ -3462,6 +4254,12 @@ public class BleManager {
     public void sendCallState(int state) {
         if (!isSessionReady())
             return;
+        if (hryMode) {
+            int s = state == CALL_ACTIVE ? HryFineProtocol.CALL_OFFHOOK : HryFineProtocol.CALL_IDLE;
+            log("Tx HryFine CALL state=" + s);
+            sendHryFrame(HryFineProtocol.call(s, ""), null, 0);
+            return;
+        }
         log("Tx INCOMING_CALL state=" + state);
         enqueueLogicalFrame(createMessage((byte) 0x06, (byte) 0x03, (byte) 0x00,
                 new byte[] { (byte) state }));
@@ -3477,7 +4275,7 @@ public class BleManager {
      * Without this the watch keeps showing the caller after the call ends.
      */
     public void dismissCallNotification() {
-        if (!isSessionReady())
+        if (!isSessionReady() || hryMode)
             return;
         ByteBuffer buf = ByteBuffer.allocate(71).order(ByteOrder.BIG_ENDIAN);
         buf.put((byte) NOTIF_CATEGORY_CALL);
@@ -3619,6 +4417,17 @@ public class BleManager {
 
     public void sendHeartRateMonitoring(boolean enabled, int startHour, int startMinute,
                                         int endHour, int endMinute, int intervalMinutes) {
+        if (hryMode) {
+            if (!isSessionReady())
+                return;
+            int start = startHour * 60 + startMinute, end = endHour * 60 + endMinute;
+            int cycle = Math.max(intervalMinutes, 1);
+            log("Tx HryFine HR auto enabled=" + enabled + " every " + cycle + "min");
+            sendHryFrame(HryFineProtocol.frame(HryFineProtocol.CMD_SETTING, (byte) 22, new byte[] {
+                    (byte) (enabled ? 1 : 0), 1, (byte) (cycle >> 8), (byte) cycle,
+                    (byte) (start >> 8), (byte) start, (byte) (end >> 8), (byte) end }), null, 0);
+            return;
+        }
         sendMonitoringWindow(0x16, "HR_MONITORING", enabled, startHour, startMinute,
                 endHour, endMinute, Math.max(intervalMinutes, 1));
     }
@@ -4488,6 +5297,18 @@ public class BleManager {
         handler.post(() -> {
             if (!isSessionReady())
                 return;
+
+            if (hryMode) {
+                if (category == NOTIF_CATEGORY_CALL) {
+                    log("Tx HryFine CALL ringing " + title);
+                    sendHryFrame(HryFineProtocol.call(HryFineProtocol.CALL_RINGING, title), null, 0);
+                } else {
+                    int type = HryFineProtocol.messageType(packageName);
+                    log("Tx HryFine MESSAGE type=" + type + " pkg=" + packageName + " title=" + title);
+                    sendHryFrame(HryFineProtocol.messagePush(type, title, content), null, 0);
+                }
+                return;
+            }
 
             // BleNotification (0x0401, UPDATE) — layout verified against the
             // original app's decompiled BleNotification entity:
