@@ -600,3 +600,50 @@ element types in isolation first.
 - Worked: the rescue runbook plus tools, preserved permanently with a working venv; a clean build and install of both UI changes; honest scoping of the firmware idea (owner accepted: "no problem later then").
 - Owner feedback this phase: "good", "we have done well".
 - Not yet verified by the owner: how the redesigned Faces panels and status corners look on screen.
+
+## Phase 7 — Pushed to GitHub, step accuracy, weather/alarms/find-watch (2026-11-02, ~22:45–23:10)
+
+### 1. Chronological Timeline
+- Owner: "lets commit step by step … push this app to my github … tell miguel" → 5 commits on branch `h19-hryfine-support`, then fork `Maverick-lab-maintaner/Fogg` and push. The auto-mode classifier first blocked the public fork until the owner said "go ahead with the fork and push". The owner asked "i hope hryfine cannot sue me"; answered (not legal advice): no HryFine/Bluetrum code, library, dial or secret is in the repo, and interoperability work is generally allowed.
+- Comment posted on the owner's own issue MiguelDLM/Fogg#9 (where Miguel had shipped the `...9f` UUID pre-release): https://github.com/MiguelDLM/Fogg/issues/9#issuecomment-6590144202
+- Owner: "check if the step tracker is accurate enough" → data audit found (a) the last hourly bucket stamped at next midnight, which Status's max() showed as today's steps (1,658 shown vs the real 711), and (b) no user profile was ever sent to the watch (stride 62 cm = firmware default 170 cm / 55 kg).
+- Owner chose: weather, alarms, find my watch. All three were built and acked. Owner: "all three worked, commit and push".
+
+### 2. Technical Architecture Evolution
+- `ParEncoder` (new): reflection bridge to `com.bluetrum.abpartool.ParTool`, so the public repo builds without the proprietary encoder; `.gitignore` excludes `libabpartool.so`, `com/bluetrum/`, the rescue venv and the rescue dial.
+- `HryFineProtocol`:
+  - `decodeSteps` stamps hour h at `day + (h+1)*3600 - 1`.
+  - New builders, all from HryFine 3.8.25 `SettingIssuedUtils`: `profile()` (key 4), `stepGoal()` (key 3), `findWatch()` (key 11), `alarms()` (key 2, 5 B/alarm), `weather()` (key 29), `weatherIcon()` (Fogg WEATHER_* → watch icons 0–8).
+- `BleManager`:
+  - `dropMidnightRecords()` runs after each steps sync.
+  - `sendUserProfile`, `sendStepGoal`, `sendWeather` and `sendFindWatch` have HryFine branches; `sendGoals` stops after the step goal on HryFine.
+  - Alarms on HryFine are phone-owned: `pushHryAlarms()` stores the full list and sends only switched-on alarms, filling today's date for undated repeating ones.
+  - On HryFine session-ready the sequence is: profile at 2.0 s, goal at 2.6 s, prayer at 4 s, weather at 9 s.
+- `DeviceFragment` + `fragment_device.xml`: the "Ring watch" row is restored and shown only for HryFine watches (SMA ignores FIND_WATCH).
+
+### 3. Rejected Paths and Why
+- Splitting the step fix and the features into separate commits: the hunks share files and interactive staging isn't available here, so one feature commit was made.
+- Re-enabling Find watch for every watch: SMA models ACK it but never ring (upstream note), so it stays HryFine-only.
+
+### 4. Current Source-of-Truth Workflow
+- Remotes: `origin` = MiguelDLM/Fogg, `fork` = Maverick-lab-maintaner/Fogg. Work on `h19-hryfine-support`, `git push fork h19-hryfine-support`.
+- Before every push: `git diff --name-only <base>..HEAD | grep -iE "bluetrum|libabpartool|\.so$|\.bin$|venv"` must print nothing.
+
+### 5. Commit/Milestone Map
+- `690a6d7` chore gitignore · `1a25520` feat(hryfine) · `a523586` feat(faces) · `d8a1b9b` fix(status) · `835a89b` docs (all pushed).
+- This phase: feat(hryfine) weather/alarms/find-watch/profile + step fix, and this docs entry.
+
+### 6. Next-Step Guidance
+1. Owner to fill in Settings → Profile (it is still at the defaults: 30 y, 170 cm, 70 kg).
+2. A 200-step walk test to judge the sensor (±10 % is normal for wrist trackers).
+3. The remaining HryFine settings not yet wired: raise-to-wake, 12/24 h, wrist, sedentary/drink/medicine reminders, DND, HR auto-monitoring, camera shutter.
+4. Missing clock on SVG faces; WhatsApp call alerts.
+
+### 7. Every Twist, Turn, and Tool Chain
+- `gh repo fork MiguelDLM/Fogg --remote` fails on gh 2.95 ("--remote unsupported when a repository argument is provided"); run `gh repo fork --remote=true --remote-name=fork` inside the clone.
+- Removing the commented-out find-watch block also removed `FIND_WATCH_TIMEOUT_MS`; re-added.
+- Stored health data was read with `adb shell run-as com.example.dialsender cat shared_prefs/dial_sender_prefs.xml`. Only step/distance/calorie series were parsed; the copy was deleted straight after.
+
+### 8. What Worked, What Did Not
+- Owner: "all three worked" (weather on the watch, alarm vibration, find-watch buzz).
+- Acks seen: profile `02 04`, goal `02 03`, weather `02 1D`, alarms `02 02`, find `02 0B` — all ok.
