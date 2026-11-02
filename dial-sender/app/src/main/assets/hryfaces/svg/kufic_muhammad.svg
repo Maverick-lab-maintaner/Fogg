@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -10 20 20"
+xmlns:xlink="http://www.w3.org/1999/xlink" fill="none" stroke="#000">
+<g id="h">
+<path id="q" d="M3,1V3H1V1H5V7.5V-3H7V9H.5H7V1H9V3H7V5H9V9.5"/>
+<use xlink:href="#q" transform="rotate(90)"/>
+</g>
+<use xlink:href="#h" transform="scale(-1)"/>
+</svg>

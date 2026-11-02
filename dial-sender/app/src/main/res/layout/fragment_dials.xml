@@ -53,6 +53,17 @@
                 android:contentDescription="@string/dials_select_local"/>
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnWatchFaces"
+                style="@style/ButtonPrimary"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:text="Faces"
+                android:textAppearance="?attr/foggTextRowValue"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"/>
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnCreateDial"
                 style="@style/ButtonPrimary"
                 android:layout_width="wrap_content"

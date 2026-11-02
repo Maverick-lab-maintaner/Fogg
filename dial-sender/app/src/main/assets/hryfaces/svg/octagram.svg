@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"
+viewBox="0 0 600 600" xmlns:xlink="http://www.w3.org/1999/xlink">
+<title>8-fold symmetric quasi-Arabesque of four loops</title>
+<defs><path id="Main" d="M-1000,0L-600,400H-165.68542L141.42136,707.10678H707.10678
+A1000,1000 0 0,0 1000,0L600-400H165.68542L-141.42136-707.10678H-707.10678
+A1000,1000 0 0,0-1000,0Z"/>
+<g id="Loop"><g stroke-width="100" stroke="rgb(0,0,0)"><use xlink:href="#Main"/></g>
+<use xlink:href="#Main"/></g></defs>
+<g transform="translate(300,300)scale(0.28,-0.28)" stroke-linejoin="round" stroke-width="50" fill="none">
+<g stroke="rgb(255,0,0)"><use xlink:href="#Loop"/></g>
+<g stroke="rgb(0,0,255)"><use xlink:href="#Loop" transform="rotate(45)"/></g>
+<g stroke="rgb(0,153,0)"><use xlink:href="#Loop" transform="rotate(90)"/></g>
+<g stroke="rgb(255,204,0)"><use xlink:href="#Loop" transform="rotate(135)"/></g>
+<g id="Xings"><path stroke-width="100" stroke="rgb(0,0,0)"
+d="M-992.546-121.869A1000,1000 0 0,0-1000,0L-920,80 M-465,400H-335
+M190,707.10678H400 M520-45.68542L612,46.31458 M215-785L370-630 M400,465V335"/>
+<path stroke="rgb(255,0,0)"
+d="M-987.688-156.434A1000,1000 0 0,0-1000,0L-900,100 M-485,400H-315
+M170,707.10678H420"/>
+<path stroke="rgb(0,0,255)" d="M500-65.68542L632,66.31458 M195-805L385-615"/>
+<path stroke="rgb(0,153,0)" d="M400,485V315"/></g>
+<use xlink:href="#Xings" transform="rotate(180)"/></g></svg>

@@ -90,6 +90,8 @@ android {
 }
 
 dependencies {
+    // SVG rendering for the vector watch faces (Apache-2.0)
+    implementation 'com.caverock:androidsvg-aar:1.4'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'

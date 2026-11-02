@@ -5081,7 +5081,10 @@ public class DialEditorActivity extends AppCompatActivity {
                                                 };
                                         bleManager.addListener(xferListener[0]);
 
-                                        bleManager.startFileTransfer(fileBytesToSend);
+                                        if (bleManager.isHryFine())
+                                            bleManager.sendHryCustomFace(renderComposite(false, false));
+                                        else
+                                            bleManager.startFileTransfer(fileBytesToSend);
                                     } catch (Exception e) {
                                         Toast.makeText(DialEditorActivity.this, "Error: " + e.getMessage(),
                                                 Toast.LENGTH_SHORT).show();

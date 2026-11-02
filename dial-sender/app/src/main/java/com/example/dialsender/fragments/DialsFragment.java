@@ -92,6 +92,8 @@ public class DialsFragment extends Fragment {
             Intent intent = new Intent(requireContext(), DialEditorActivity.class);
             startActivity(intent);
         });
+        view.findViewById(R.id.btnWatchFaces).setOnClickListener(v ->
+                startActivity(new Intent(requireContext(), com.example.dialsender.HryFacesActivity.class)));
 
         if (view.findViewById(R.id.btnPickFile) != null) {
             view.findViewById(R.id.btnPickFile).setOnClickListener(v -> {
@@ -312,7 +314,11 @@ public class DialsFragment extends Fragment {
             };
             bleManager.addListener(xferListener[0]);
 
-            bleManager.startFileTransfer(fileBytesToSend);
+            // HryFine watches take a background image, not an SMA dial file.
+            if (bleManager.isHryFine() && entry.thumb != null)
+                bleManager.sendHryCustomFace(entry.thumb);
+            else
+                bleManager.startFileTransfer(fileBytesToSend);
 
         } catch (Exception e) {
             Toast.makeText(requireContext(), "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
