@@ -147,7 +147,9 @@ final class HryFineProtocol {
             s += Math.min(hs, 20000);
             d += be(p, o + 2, 2);
             cal += be(p, o + 4, 4);
-            long t = Math.min(day + (h + 1) * 3600L, nowSec);
+            // End of the hour minus one second: stamping at (h+1)*3600 put hour 23's
+            // total at the next midnight, so yesterday's total showed up as today's max.
+            long t = Math.min(day + (h + 1) * 3600L - 1, nowSec);
             steps.add(t + ":" + s);
             kcal.add(t + ":" + cal / 1000);
             metres.add(t + ":" + d);
@@ -378,6 +380,93 @@ final class HryFineProtocol {
         p[0] = (byte) type;
         System.arraycopy(body, 0, p, 3, body.length);
         return frame(CMD_SETTING, (byte) 18, p);
+    }
+
+    /**
+     * User profile (setting key 4), as HryFine sends it: sex(1 bit, 1 = male) + age(7),
+     * height cm (8 bits, LSB carried on), weight kg (8 bits). The watch uses it for
+     * stride length (distance) and calories; without it the firmware assumes 170 cm / 55 kg.
+     */
+    static byte[] profile(boolean male, int age, int heightCm, int weightKg) {
+        int sex = male ? 1 : 0;
+        return frame(CMD_SETTING, (byte) 4, new byte[] {
+                (byte) ((sex << 7) + (age & 0x7F)),
+                (byte) (heightCm >> 1),
+                (byte) (((heightCm & 1) << 7) + (weightKg >> 3)),
+                (byte) ((weightKg & 7) << 5) });
+    }
+
+    /** Daily step goal (setting key 3), int32 big-endian. */
+    static byte[] stepGoal(int goal) {
+        return frame(CMD_SETTING, (byte) 3, new byte[] {
+                (byte) (goal >>> 24), (byte) (goal >>> 16), (byte) (goal >>> 8), (byte) goal });
+    }
+
+    /** Make the watch buzz (setting key 11): 1 starts, 0 stops. */
+    static byte[] findWatch(boolean start) {
+        return frame(CMD_SETTING, (byte) 11, new byte[] { (byte) (start ? 1 : 0) });
+    }
+
+    /**
+     * Full alarm list (setting key 2), 5 bytes each, as HryFine sends it:
+     * year-2000(6) month(4) day(5) hour(5) minute(6) slot(3) pad(3), then the
+     * repeat mask (bit0 = Monday … bit6 = Sunday, 0 = once). There is no on/off
+     * flag: the list replaces the watch's, so only switched-on alarms are sent.
+     * An empty payload clears every alarm.
+     */
+    static byte[] alarms(java.util.List<int[]> list) {
+        byte[] b = new byte[list.size() * 5];
+        for (int i = 0; i < list.size(); i++) {
+            int[] a = list.get(i); // year, month, day, hour, minute, slot, repeat
+            int y = a[0] - 2000, mo = a[1], d = a[2], h = a[3], mi = a[4], slot = a[5] & 7;
+            int o = i * 5;
+            b[o] = (byte) ((y << 2) + ((mo & 15) >> 2));
+            b[o + 1] = (byte) (((mo & 3) << 6) + (d << 1) + (h >> 4));
+            b[o + 2] = (byte) (((h & 15) << 4) + (mi >> 2));
+            b[o + 3] = (byte) (((mi & 3) << 6) + (slot << 3));
+            b[o + 4] = (byte) (a[6] & 127);
+        }
+        return frame(CMD_SETTING, (byte) 2, b);
+    }
+
+    /**
+     * Today's weather (setting key 29): year(2) month day 0 icon min max
+     * cityLen city(UTF-8, ≤50) current. Icons: 0 clear, 1 few clouds, 2 clouds,
+     * 3 overcast, 4 showers, 5 rain, 6 thunder, 7 snow, 8 mist.
+     */
+    static byte[] weather(Calendar day, int icon, int min, int max, int current, String city) {
+        byte[] c = utf8Prefix(city == null ? "" : city, 50);
+        if (max <= min)
+            min = max - 1;
+        byte[] p = new byte[c.length + 10];
+        int y = day.get(Calendar.YEAR);
+        p[0] = (byte) (y >> 8);
+        p[1] = (byte) y;
+        p[2] = (byte) (day.get(Calendar.MONTH) + 1);
+        p[3] = (byte) day.get(Calendar.DAY_OF_MONTH);
+        p[5] = (byte) icon;
+        p[6] = (byte) min;
+        p[7] = (byte) max;
+        p[8] = (byte) c.length;
+        System.arraycopy(c, 0, p, 9, c.length);
+        p[c.length + 9] = (byte) current;
+        return frame(CMD_SETTING, (byte) 29, p);
+    }
+
+    /** Fogg's WEATHER_* condition (0..20) → the watch's 9 icons. */
+    static int weatherIcon(int fogg) {
+        switch (fogg) {
+            case 1: return 0;                 // sunny
+            case 2: return 1;                 // partly cloudy
+            case 3: return 3;                 // overcast
+            case 13: return 4;                // drizzle → showers
+            case 4: case 14: return 5;        // rain, heavy rain
+            case 5: case 6: case 15: case 19: return 6; // thunder, lightning, tornado
+            case 8: case 16: case 17: case 18: case 20: return 7; // snow family, sleet
+            case 9: case 10: case 11: return 8; // fog, sandstorm, haze
+            case 7: case 12: return 2;        // wind → clouds
+            default: return 1;
+        }
     }
 
     /** [state, 0] + UTF-8 caller name/number. */

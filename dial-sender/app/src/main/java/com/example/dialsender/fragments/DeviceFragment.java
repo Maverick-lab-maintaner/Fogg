@@ -151,9 +151,8 @@ public class DeviceFragment extends Fragment implements BleManager.BleStateListe
                     startActivity(new Intent(requireContext(), com.example.dialsender.StockMarketActivity.class)));
         }
         setupCallControl(view);
-        // Find watch (FIND_WATCH 0x0234): the frame is accepted but the watch
-        // never rings — see docs/protocols/15-MONITORING-AND-ACTIONS.md §2.
-        // setupFindWatch(view);
+        // Find watch: works on HryFine watches only (SMA ignores FIND_WATCH 0x0234).
+        setupFindWatch(view);
         setupMonitoring(view);
         setupStandbyRow(view, R.id.rowStandby, R.id.txtStandby);
 
@@ -963,45 +962,39 @@ public class DeviceFragment extends Fragment implements BleManager.BleStateListe
      * shows "Ringing…" for a few seconds as feedback that the frame went out,
      * then goes back to offering the action.
      */
-    /** Long enough to walk to the next room, short enough not to annoy. */
     private static final long FIND_WATCH_TIMEOUT_MS = 30_000;
 
-    /*
-     * Find watch is disabled: the write is ACKed but the watch never rings.
-     * Kept for a model that does honour FIND_WATCH (0x0234).
-     *
-     * private void setupFindWatch(View view) {
-     * View row = view.findViewById(R.id.rowFindWatch);
-     * TextView value = view.findViewById(R.id.txtFindWatch);
-     * if (row == null || value == null)
-     * return;
-     *
-     * final boolean[] ringing = { false };
-     * row.setOnClickListener(v -> {
-     * if (!bleManager.isSessionReady()) {
-     * Toast.makeText(requireContext(), R.string.device_not_connected,
-     * Toast.LENGTH_SHORT).show();
-     * return;
-     * }
-     * ringing[0] = !ringing[0];
-     * bleManager.sendFindWatch(ringing[0]);
-     * value.setText(ringing[0] ? R.string.find_watch_ringing : R.string.find_watch_ring);
-     * if (ringing[0]) {
-     * // The watch never reports that it stopped, so the phone owns
-     * // the stop: after a while, send it rather than just relabelling
-     * // the row. Letting the label lapse on its own made the next tap
-     * // start a second ring instead of ending the first.
-     * value.postDelayed(() -> {
-     * if (!ringing[0])
-     * return;
-     * ringing[0] = false;
-     * bleManager.sendFindWatch(false);
-     * value.setText(R.string.find_watch_ring);
-     * }, FIND_WATCH_TIMEOUT_MS);
-     * }
-     * });
-     * }
+    /**
+     * Find watch. On SMA watches the FIND_WATCH write is ACKed but never rings, so
+     * the row stays hidden there; HryFine watches buzz (setting key 11).
      */
+    private void setupFindWatch(View view) {
+        View row = view.findViewById(R.id.rowFindWatch);
+        TextView value = view.findViewById(R.id.txtFindWatch);
+        if (row == null || value == null)
+            return;
+        row.setVisibility(bleManager.isHryFine() ? View.VISIBLE : View.GONE);
+        final boolean[] ringing = { false };
+        row.setOnClickListener(v -> {
+            if (!bleManager.isSessionReady()) {
+                Toast.makeText(requireContext(), R.string.device_not_connected, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            ringing[0] = !ringing[0];
+            bleManager.sendFindWatch(ringing[0]);
+            value.setText(ringing[0] ? R.string.find_watch_ringing : R.string.find_watch_ring);
+            if (ringing[0]) {
+                // The watch never reports that it stopped, so the phone sends the stop.
+                value.postDelayed(() -> {
+                    if (!ringing[0])
+                        return;
+                    ringing[0] = false;
+                    bleManager.sendFindWatch(false);
+                    value.setText(R.string.find_watch_ring);
+                }, FIND_WATCH_TIMEOUT_MS);
+            }
+        });
+    }
 
     // ===== Health monitoring windows =====
 

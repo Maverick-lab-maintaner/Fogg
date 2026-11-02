@@ -354,15 +354,13 @@
             </LinearLayout>
             <View style="?attr/foggDividerStyle"/>
 
-<!--
-            <LinearLayout android:id="@+id/rowFindWatch" style="?attr/foggRowStyle">
+            <!-- Find watch: shown only for HryFine watches (the SMA FIND_WATCH frame is ignored). -->
+            <LinearLayout android:id="@+id/rowFindWatch" style="?attr/foggRowStyle" android:visibility="gone">
                 <ImageView style="?attr/foggRowIconStyle" android:src="@drawable/ic_vibration"
                     android:contentDescription="@null"/>
                 <TextView style="@style/Fogg.Row.Label" android:text="@string/dev_ring_watch"/>
                 <TextView android:id="@+id/txtFindWatch" style="@style/Fogg.Row.Value" android:text="@string/find_watch_ring"/>
             </LinearLayout>
-            <View style="?attr/foggDividerStyle"/>
-    -->
 
             <LinearLayout android:id="@+id/btnCamera" style="?attr/foggRowStyle">
                 <ImageView style="?attr/foggRowIconStyle" android:src="@drawable/ic_camera"

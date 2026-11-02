@@ -1683,6 +1683,10 @@ public class BleManager {
                     storeHrySeries("steps", a.get(0));
                     storeHrySeries("calories", a.get(1));
                     storeHrySeries("distance", a.get(2));
+                    // Older builds stamped the last hour at the next midnight; those
+                    // records count yesterday's total as today's. New ones never land there.
+                    for (String n : new String[] { "steps", "calories", "distance" })
+                        dropMidnightRecords(n);
                     break;
                 }
                 case HryFineProtocol.HEALTH_HEART_RATE:
@@ -1723,6 +1727,32 @@ public class BleManager {
         } catch (RuntimeException e) {
             log("HryFine health key=" + key + ": decode failed (" + e + ")");
         }
+    }
+
+    /** Removes records stamped exactly at local midnight (00:00:00). */
+    private void dropMidnightRecords(String name) {
+        String raw = prefs.getString("health_" + name, "");
+        if (raw.isEmpty())
+            return;
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        StringBuilder kept = new StringBuilder();
+        boolean changed = false;
+        for (String rec : raw.split(",")) {
+            try {
+                cal.setTimeInMillis(Long.parseLong(rec.substring(0, rec.indexOf(':'))) * 1000L);
+                if (cal.get(java.util.Calendar.HOUR_OF_DAY) == 0 && cal.get(java.util.Calendar.MINUTE) == 0
+                        && cal.get(java.util.Calendar.SECOND) == 0) {
+                    changed = true;
+                    continue;
+                }
+            } catch (RuntimeException ignored) {
+            }
+            if (kept.length() > 0)
+                kept.append(",");
+            kept.append(rec);
+        }
+        if (changed)
+            prefs.edit().putString("health_" + name, kept.toString()).commit();
     }
 
     private void dropHryRecords(String name, long from, long to) {
@@ -1779,7 +1809,12 @@ public class BleManager {
         handler.postDelayed(() -> sendHryFrame(HryFineProtocol.frame(HryFineProtocol.CMD_SETTING, (byte) 1,
                 HryFineProtocol.timePayload(java.util.Calendar.getInstance())), null, 0), 500);
         handler.postDelayed(() -> sendHryFrame(HryFineProtocol.requestCustomFace(), null, 0), 1200);
+        // Height/weight drive the watch's distance and calories; the goal drives its ring.
+        handler.postDelayed(this::sendUserProfile, 2000);
+        handler.postDelayed(this::sendStepGoal, 2600);
         handler.postDelayed(() -> PrayerScheduler.onWatchConnected(context), 4000);
+        // Weather after the prayer face has had its turn on the link.
+        handler.postDelayed(() -> WeatherSync.syncIfPossible(context, this), 9000);
     }
 
     private void onSessionReady() {
@@ -3712,6 +3747,14 @@ public class BleManager {
         if (heightCm < 50f || heightCm > 250f) heightCm = 170f;
         if (weightKg < 10f || weightKg > 300f) weightKg = 70f;
 
+        if (hryMode) {
+            int h = Math.round(heightCm), w = Math.min(255, Math.round(weightKg));
+            log("Tx HryFine PROFILE: male=" + (gender != GENDER_FEMALE) + " age=" + age
+                    + " height=" + h + "cm weight=" + w + "kg");
+            sendHryFrame(HryFineProtocol.profile(gender != GENDER_FEMALE, Math.min(age, 127), h, w), null, 0);
+            return;
+        }
+
         ByteBuffer bb = ByteBuffer.allocate(11).order(ByteOrder.LITTLE_ENDIAN);
         bb.put((byte) unit);
         bb.put((byte) (gender == GENDER_FEMALE ? GENDER_FEMALE : GENDER_MALE));
@@ -3735,6 +3778,12 @@ public class BleManager {
 
         int goal = prefs.getInt("goal_steps", 10000);
         if (goal < 1 || goal > 200000) goal = 10000;
+
+        if (hryMode) {
+            log("Tx HryFine STEP_GOAL: " + goal);
+            sendHryFrame(HryFineProtocol.stepGoal(goal), null, 0);
+            return;
+        }
 
         byte[] payload = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(goal).array();
         log("Tx STEP_GOAL: " + goal);
@@ -3770,6 +3819,8 @@ public class BleManager {
     public void sendGoals() {
         if (!isSessionReady()) return;
         sendStepGoal();
+        // HryFine watches only take the step goal; the SMA goal frames below mean nothing to them.
+        if (hryMode) return;
 
         int kcal = clamp(prefs.getInt("goal_calories", 500), 1, 20000);
         int km = clamp(prefs.getInt("goal_distance", 5), 1, 500);
@@ -4137,6 +4188,14 @@ public class BleManager {
             return;
         }
         Calendar now = Calendar.getInstance();
+        if (hryMode) {
+            WeatherDay t = days.get(0);
+            int icon = HryFineProtocol.weatherIcon(t.conditionCode);
+            log("Tx HryFine WEATHER icon=" + icon + " " + t.tempLow + ".." + t.tempHigh + " now=" + t.tempCurrent);
+            handler.post(() -> sendHryFrame(HryFineProtocol.weather(now, icon, t.tempLow, t.tempHigh,
+                    t.tempCurrent, city), null, 0));
+            return;
+        }
 
         // --- 1. WEATHER_REALTIME2 (0x040C, UPDATE 0x00): BleTime(6) + City(66) + BleWeather2(20) = 92 B ---
         ByteBuffer rt2 = ByteBuffer.allocate(92);
@@ -4369,6 +4428,10 @@ public class BleManager {
         if (!isSessionReady())
             return;
         log("Tx FIND_WATCH start=" + start);
+        if (hryMode) {
+            handler.post(() -> sendHryFrame(HryFineProtocol.findWatch(start), null, 0));
+            return;
+        }
         enqueueLogicalFrame(createMessage((byte) 0x02, (byte) 0x34, (byte) 0x00,
                 new byte[] { (byte) (start ? 1 : 0) }));
         flushQueue();
@@ -4958,6 +5021,10 @@ public class BleManager {
 
     /** Ask the watch for every alarm it holds (READ, id 0xFF = all). */
     public void readAlarms() {
+        if (hryMode) {
+            notifyAlarms(getCachedAlarms());
+            return;
+        }
         if (!isSessionReady())
             return;
         log("Tx ALARM read all");
@@ -4977,6 +5044,12 @@ public class BleManager {
     public void createAlarm(BleAlarm alarm) {
         if (alarm != null)
             alarm.id = nextFreeAlarmId();
+        if (hryMode && alarm != null) {
+            List<BleAlarm> all = getCachedAlarms();
+            all.add(alarm);
+            pushHryAlarms(all);
+            return;
+        }
         sendAlarm(alarm, BleKeyFlag.CREATE.getValue(), "create");
     }
 
@@ -4999,6 +5072,14 @@ public class BleManager {
 
     /** Overwrite the alarm with this id (UPDATE). */
     public void updateAlarm(BleAlarm alarm) {
+        if (hryMode && alarm != null) {
+            List<BleAlarm> all = getCachedAlarms();
+            for (int i = 0; i < all.size(); i++)
+                if (all.get(i).id == alarm.id)
+                    all.set(i, alarm);
+            pushHryAlarms(all);
+            return;
+        }
         sendAlarm(alarm, BleKeyFlag.UPDATE.getValue(), "update");
     }
 
@@ -5032,6 +5113,15 @@ public class BleManager {
 
     /** Delete one alarm by id, or every alarm with {@code id == 0xFF}. */
     public void deleteAlarm(int id) {
+        if (hryMode) {
+            List<BleAlarm> all = getCachedAlarms();
+            java.util.Iterator<BleAlarm> it = all.iterator();
+            while (it.hasNext())
+                if (id == 0xFF || it.next().id == id)
+                    it.remove();
+            pushHryAlarms(all);
+            return;
+        }
         if (!isSessionReady())
             return;
         log("Tx ALARM delete id=" + id);
@@ -5043,6 +5133,10 @@ public class BleManager {
 
     /** Replace the watch's whole list in one frame (RESET). */
     public void resetAlarms(List<BleAlarm> alarms) {
+        if (hryMode && alarms != null) {
+            pushHryAlarms(new java.util.ArrayList<>(alarms));
+            return;
+        }
         if (!isSessionReady() || alarms == null)
             return;
         int n = Math.min(alarms.size(), MAX_ALARMS);
@@ -5102,6 +5196,34 @@ public class BleManager {
 
     public void setAlarmListener(AlarmListener l) {
         this.alarmListener = l;
+    }
+
+    /**
+     * HryFine has no per-alarm commands and no on/off flag: the phone keeps the
+     * list (including switched-off alarms) and sends the switched-on ones whole.
+     */
+    private void pushHryAlarms(List<BleAlarm> all) {
+        while (all.size() > MAX_ALARMS)
+            all.remove(all.size() - 1);
+        java.util.List<int[]> on = new java.util.ArrayList<>();
+        for (BleAlarm a : all) {
+            a.rollToFuture();
+            if (!a.enabled)
+                continue;
+            // Repeating alarms may carry no date; the watch still expects a valid one.
+            Calendar today = Calendar.getInstance();
+            boolean dated = a.year >= 2000 && a.month >= 1 && a.day >= 1;
+            on.add(new int[] { dated ? a.year : today.get(Calendar.YEAR),
+                    dated ? a.month : today.get(Calendar.MONTH) + 1,
+                    dated ? a.day : today.get(Calendar.DAY_OF_MONTH),
+                    a.hour, a.minute, a.id & 7, a.repeat });
+        }
+        storeAlarms(all);
+        notifyAlarms(all);
+        if (!isSessionReady())
+            return;
+        log("Tx HryFine ALARMS: " + on.size() + " on of " + all.size());
+        handler.post(() -> sendHryFrame(HryFineProtocol.alarms(on), null, 0));
     }
 
     private void notifyAlarms(List<BleAlarm> alarms) {
