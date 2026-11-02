@@ -38,3 +38,10 @@ dials/**
 
 # Device prefs dumps pulled off the phone for debugging (contain real health data)
 dial-sender/dial_sender_prefs.xml
+
+# Proprietary Bluetrum image encoder (taken from a local HryFine install): never commit
+dial-sender/app/src/main/jniLibs/**/libabpartool.so
+dial-sender/app/src/main/java/com/bluetrum/
+# H19 rescue: local venv and HryFine store dial
+tools/h19-rescue/venv/
+tools/h19-rescue/rescue_dial.bin
