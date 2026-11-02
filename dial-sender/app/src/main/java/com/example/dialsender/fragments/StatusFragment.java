@@ -465,6 +465,31 @@ public class StatusFragment extends Fragment {
         contentCol.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        // Corner row above the gauge: location top-left, temperature top-right.
+        // (They used to share one chip pinned over the card, which the steps arc covered.)
+        LinearLayout corners = new LinearLayout(requireContext());
+        corners.setOrientation(LinearLayout.HORIZONTAL);
+        corners.setGravity(Gravity.CENTER_VERTICAL);
+        long wTime = prefs.getLong("weather_time", 0);
+        String city = wTime > 0 ? prefs.getString("weather_city", "") : "";
+        String tempText = wTime > 0 ? prefs.getInt("weather_temp", 0) + "°C" : "--°C";
+        TextView locChip = cornerChip(theme, city.isEmpty() ? getString(R.string.app_name) : city,
+                R.drawable.ic_location_pin, false);
+        locChip.setMaxLines(1);
+        locChip.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        TextView tempChip = cornerChip(theme, tempText, R.drawable.ic_weather_cloud, true);
+        if (city.isEmpty())
+            locChip.setVisibility(View.INVISIBLE);
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        llp.setMarginEnd(dp(8));
+        LinearLayout.LayoutParams locWrap = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        LinearLayout locHolder = new LinearLayout(requireContext());
+        locHolder.addView(locChip, locWrap);
+        corners.addView(locHolder, llp);
+        corners.addView(tempChip);
+        contentCol.addView(corners);
+
         // Gauge Container
         int steps = (int) latest(P + "steps", todayStart);
         int stepGoal = prefs.getInt("goal_steps", 10000);
@@ -495,48 +520,37 @@ public class StatusFragment extends Fragment {
         contentCol.addView(progressPill);
 
         heroCard.addView(contentCol);
-
-        // Weather chip pinned top-right
-        TextView weatherChip = new TextView(requireContext());
-        long wTime = prefs.getLong("weather_time", 0);
-        if (wTime > 0) {
-            int temp = prefs.getInt("weather_temp", 0);
-            String city = prefs.getString("weather_city", "");
-            weatherChip.setText(temp + "°C" + (city.isEmpty() ? "" : " · " + city));
-        } else {
-            weatherChip.setText("--°C");
-        }
-        // Was a 🌤️ emoji, which rendered at a different size and colour on
-        // every device font. A tinted vector matches the rest of the chips.
-        android.graphics.drawable.Drawable wIcon = androidx.core.content.ContextCompat
-                .getDrawable(requireContext(), R.drawable.ic_weather_cloud);
-        if (wIcon != null) {
-            wIcon = wIcon.mutate();
-            wIcon.setBounds(0, 0, dp(16), dp(16));
-            androidx.core.graphics.drawable.DrawableCompat.setTint(wIcon, theme.accentPrimary);
-            weatherChip.setCompoundDrawablesRelative(wIcon, null, null, null);
-            weatherChip.setCompoundDrawablePadding(dp(6));
-        }
-        weatherChip.setTextColor(theme.textPrimary);
-        weatherChip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-
-        GradientDrawable cbg = new GradientDrawable();
-        cbg.setColor(ThemeManager.withAlpha(theme.accentPrimary, 30));
-        cbg.setCornerRadius(theme.radiusChip);
-        cbg.setStroke(Math.max(theme.stroke, 1), ThemeManager.withAlpha(theme.accentPrimary, 60));
-        weatherChip.setBackground(cbg);
-        weatherChip.setPadding((int) (12 * density), (int) (6 * density), (int) (12 * density), (int) (6 * density));
-        weatherChip.setClickable(true);
-        weatherChip.setForeground(rippleForeground());
-        weatherChip.setOnClickListener(v -> startActivity(new Intent(requireContext(), WeatherDetailActivity.class)));
-
-        FrameLayout.LayoutParams wlp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        wlp.gravity = Gravity.END | Gravity.TOP;
-        weatherChip.setLayoutParams(wlp);
-        heroCard.addView(weatherChip);
-
         return heroCard;
+    }
+
+    /** Small tinted-icon chip; both open the weather screen. */
+    private TextView cornerChip(ThemeManager.AppTheme theme, String text, int iconRes, boolean strong) {
+        TextView chip = new TextView(requireContext());
+        chip.setText(text);
+        // A tinted vector instead of an emoji, so size and colour match on every device font.
+        android.graphics.drawable.Drawable icon = androidx.core.content.ContextCompat
+                .getDrawable(requireContext(), iconRes);
+        if (icon != null) {
+            icon = icon.mutate();
+            icon.setBounds(0, 0, dp(15), dp(15));
+            androidx.core.graphics.drawable.DrawableCompat.setTint(icon, theme.accentPrimary);
+            chip.setCompoundDrawablesRelative(icon, null, null, null);
+            chip.setCompoundDrawablePadding(dp(5));
+        }
+        chip.setTextColor(strong ? theme.textPrimary : theme.textSecondary);
+        chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, strong ? 13 : 12);
+        if (strong)
+            chip.setTypeface(null, Typeface.BOLD);
+        GradientDrawable cbg = new GradientDrawable();
+        cbg.setColor(ThemeManager.withAlpha(theme.accentPrimary, strong ? 30 : 16));
+        cbg.setCornerRadius(theme.radiusChip);
+        cbg.setStroke(Math.max(theme.stroke, 1), ThemeManager.withAlpha(theme.accentPrimary, strong ? 60 : 36));
+        chip.setBackground(cbg);
+        chip.setPadding(dp(11), dp(6), dp(12), dp(6));
+        chip.setClickable(true);
+        chip.setForeground(rippleForeground());
+        chip.setOnClickListener(v -> startActivity(new Intent(requireContext(), WeatherDetailActivity.class)));
+        return chip;
     }
 
     // ===================== Metric Cards =====================
