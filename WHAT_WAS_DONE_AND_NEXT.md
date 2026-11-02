@@ -647,3 +647,35 @@ element types in isolation first.
 ### 8. What Worked, What Did Not
 - Owner: "all three worked" (weather on the watch, alarm vibration, find-watch buzz).
 - Acks seen: profile `02 04`, goal `02 03`, weather `02 1D`, alarms `02 02`, find `02 0B` — all ok.
+
+## Phase 8 — Session close: profile left at defaults (2026-11-02, ~23:10)
+
+### 1. Chronological Timeline
+- After the Phase 7 push, the owner was asked to fill in Settings → Profile so distance and calories use real values. Owner: "leave it, I dont like PID info and I need i would say is ok". The profile stays at Fogg's defaults (male, 30 y, 170 cm, 70 kg), which are now sent to the watch.
+- Owner ran `/update-doc` "and i would exit now". The session ends here.
+
+### 2. Technical Architecture Evolution
+- No code changes. The assistant memory `feedback_no_pii_in_chat.md` was extended: don't ask the owner to enter personal details into apps.
+
+### 3. Rejected Paths and Why
+- **Asking for the owner's real profile:** declined by the owner (privacy). Defaults are accepted; step counts are unaffected, and distance/calories are estimates.
+
+### 4. Current Source-of-Truth Workflow
+- Unchanged from Phase 7. Branch `h19-hryfine-support` on `fork` (Maverick-lab-maintaner/Fogg) is the canonical copy. The phone runs the build from commit `480203e` plus the local proprietary encoder.
+
+### 5. Commit/Milestone Map
+- This entry: docs commit on `h19-hryfine-support` (no code).
+
+### 6. Next-Step Guidance
+1. Don't prompt for profile data again; treat distance/calories as estimates.
+2. Optional: a 200-step walk test to judge the sensor.
+3. Not yet wired: raise-to-wake, 12/24 h, wrist, sedentary/drink/medicine reminders, DND, HR auto-monitoring, camera shutter.
+4. The SVG faces' missing clock; WhatsApp call alerts.
+5. Watch MiguelDLM/Fogg#9 for Miguel's reply; open a PR only if he asks.
+
+### 7. Every Twist, Turn, and Tool Chain
+- Nothing new; see Phases 1–7 and `tools/h19-rescue/RECOVERY.md`.
+
+### 8. What Worked, What Did Not
+- Day total: the watch connected, synced, got notifications and calls, prayer and Quran reminders, faces, weather, alarms and find-watch, and was rescued from its bootloader 4×. Code is published on GitHub and Miguel has been informed.
+- Owner feedback: "all three worked", "we have done well".
