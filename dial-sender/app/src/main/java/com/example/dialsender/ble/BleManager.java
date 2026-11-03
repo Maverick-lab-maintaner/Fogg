@@ -1543,8 +1543,17 @@ public class BleManager {
         return s == null ? null : s.getCharacteristic(uuid);
     }
 
-    @SuppressLint("MissingPermission")
     private void writeCccd(BluetoothGattCharacteristic c, boolean enable) {
+        writeCccd(c, enable, 0);
+    }
+
+    /**
+     * The descriptor write is refused while another GATT operation is in flight
+     * (seen: the very first face after connect failed here and left the watch
+     * waiting). Retry a few times before giving up.
+     */
+    @SuppressLint("MissingPermission")
+    private void writeCccd(BluetoothGattCharacteristic c, boolean enable, int attempt) {
         BluetoothGatt g = bluetoothGatt;
         BluetoothGattDescriptor d = c == null ? null : c.getDescriptor(BleUuids.CCCD);
         boolean ok = g != null && d != null;
@@ -1556,6 +1565,14 @@ public class BleManager {
         }
         if (ok)
             return;
+        if (attempt < 6 && g != null && d != null) {
+            HryOta stepNow = hryOtaStep;
+            handler.postDelayed(() -> {
+                if (hryOtaStep == stepNow)
+                    writeCccd(c, enable, attempt + 1);
+            }, 300);
+            return;
+        }
         if (hryOtaStep == HryOta.RESTORE_OTA || hryOtaStep == HryOta.RESTORE_NUS)
             completeHryOta();
         else
@@ -1564,6 +1581,7 @@ public class BleManager {
 
     @SuppressLint("MissingPermission")
     private void startHryOta() {
+        hryWatchAwaitingFace = true;
         log("HryFine face: watch ready, opening transfer channel");
         hryOtaWaitMs = HRY_OTA_TIMEOUT_MS;
         hryOtaStep = HryOta.MTU;
@@ -1721,7 +1739,26 @@ public class BleManager {
         }
     }
 
+    /** True once the watch has agreed to receive a face; a failure after that leaves it waiting. */
+    private boolean hryWatchAwaitingFace;
+
     private void completeHryOta() {
+        boolean resetLink = !hryOtaOk && (hryWatchAwaitingFace
+                || (hryOtaError != null && hryOtaError.contains("stopped responding")));
+        hryWatchAwaitingFace = false;
+        if (resetLink) {
+            // The watch is still waiting for the face and ignores new requests until the
+            // link drops; rebuild it so the next attempt works.
+            log("HryFine face: resetting the link so the watch stops waiting");
+            handler.postDelayed(() -> {
+                BluetoothGatt g = bluetoothGatt;
+                if (g != null && hryOtaStep == HryOta.NONE)
+                    try {
+                        g.disconnect();
+                    } catch (SecurityException ignored) {
+                    }
+            }, 1500);
+        }
         hryOtaStep = HryOta.NONE;
         hryOtaRx = null;
         if (hryOtaOk && hryFaceSettings != null)
