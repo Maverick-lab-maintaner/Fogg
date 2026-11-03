@@ -734,3 +734,103 @@ element types in isolation first.
 ### 8. What Worked, What Did Not
 - Worked: a full sync after the fix (1,142 steps, heart rate, sleep); the face sent after the sync without dropping the link; a clean build, install and push.
 - Did not (yet): the watch's calling Bluetooth still turns off until the owner re-pairs it. Owner: "it went of again now".
+
+## Phase 10 — Choosing future hardware (research only), staying on the H19 (2026-11-03, ~13:40–14:30)
+
+### 1. Chronological Timeline
+- Owner asked about Xiaomi and openvela, cheap Xiaomi options, and cheap watches "we can build from ground up". Research followed (web search only, no code).
+- Owner picked the Waveshare 2.06" board as the favourite, then asked about Xiaomi customisability. Owner: "privacy is big concern for me too" → Xiaomi and Amazfit ruled out (vendor account required).
+- Owner asked about Amazfit / Zepp OS → strong device, but its first pairing needs a Zepp account.
+- Owner: "never having an account, let's go with Waveshare, i would judge between waveshare and Pinetime" → comparison, prices, shipping and Vinted advice.
+- Owner: "i would use h19 for now" → no hardware bought. Fogg on the H19 remains the product.
+- Memory added: `user_privacy_first.md` (rank account-free and offline options first).
+
+### 2. Technical Architecture Evolution
+- No code changes. Research results are recorded below for the future hardware decision.
+
+#### Table A — Xiaomi / openvela summary
+| Topic | Finding |
+|---|---|
+| openvela | Xiaomi's open AIoT OS on Apache NuttX, Apache-2.0; open version of internal Vela |
+| Retail Xiaomi bands | Locked firmware; Mi Band 8 custom FW needed SWD pins (Hackaday) |
+| What is customisable | Watch faces; Vela JS quick apps (.rpk) via official AIoT-IDE + community sideload tools; Gadgetbridge "mostly supported" (Band 10) |
+| Limits | No core-firmware changes; sideloading unofficial; quick apps have no health API; Arabic unconfirmed; **Xiaomi account at setup** |
+| Smart Band 10 | ~21-day battery, HR + SpO2, from $49.90 / €49.99 (UK ~£39.99) |
+
+#### Table B — Build-from-scratch / open hardware
+| Hardware | Price | Screen | Notes |
+|---|---|---|---|
+| Waveshare ESP32-S3-Touch-AMOLED-2.06 | ~$30–32 (no battery); ~$43 / €35.54 with battery | AMOLED 410×502 | IMU (QMI8658), RTC (PCF85063), PMIC (AXP2101), dual mics, 400 mAh recommended; **no heart-rate sensor**; dev kit, not sealed |
+| PineTime | $26.99 / $34.99; EU €67.50 incl. VAT + free shipping; refurbished €42.50 | 240×240 LCD | HR sensor, InfiniTime, Gadgetbridge native, ~1 week battery, proprietary charging cradle |
+| LILYGO T-Watch S3 | ~$40–43 | 240×240 LCD | ESP32-S3 + LoRa, 1–2 days battery |
+| Watchy | ~$35–65 | E-paper | Weeks of battery |
+
+#### Table C — Device options vs. the owner's goals
+| | Battery | Heart rate | Faces/apps | Freedom | Account needed |
+|---|---|---|---|---|---|
+| H19 (now, with Fogg) | Days | Yes | Pictures only | Low | No |
+| Xiaomi Band 10 | ~21 days | Yes + SpO2 | Custom faces + own apps | Medium | Yes (at least at setup) |
+| Amazfit Bip 6 | ~14 days | Yes | Official mini-apps + faces | Medium | Once at setup (+ after any reset) |
+| Waveshare 2.06 | 1–2 days | No | Anything we write | Total | Never |
+| PineTime | ~1 week | Yes | Open firmware (C++ faces) | High | Never |
+
+#### Table D — Privacy view
+| | Account | Cloud | Who controls software | Health sensors |
+|---|---|---|---|---|
+| Waveshare + own firmware | None | None | Owner | Steps only |
+| PineTime + InfiniTime + Gadgetbridge | None | None | Open-source community | Steps + HR |
+| H19 + Fogg | None | None (Open-Meteo for weather/geocoding only, no account) | Fogg ours; watch FW closed | Steps, HR, sleep |
+| Xiaomi Band 10 | Xiaomi account | Xiaomi cloud | Xiaomi | Steps, HR, SpO2 |
+| Amazfit Bip 6 | Zepp account once | Offline after Gadgetbridge switch | Zepp | Steps, HR |
+
+#### Table E — Waveshare vs PineTime (owner's final shortlist)
+| What matters | Waveshare 2.06 | PineTime |
+|---|---|---|
+| Beautiful normal + Islamic faces | Much better (AMOLED 410×502) | Like the H19 |
+| Arabic text / Quran | Yes (fonts in 32 MB flash, LVGL bidi) | Hard (small flash, fonts compiled in) |
+| Live prayer countdown / ring | Yes | Yes, plainer |
+| New faces | Easy to add | C++ compiled in; reflash per change |
+| Heart rate | No | Yes |
+| Battery | 1–2 days | ~1 week |
+| Ready-made software | Community bases; we build the rest | InfiniTime + Gadgetbridge out of the box |
+| Finished-watch feel | Dev kit, not sealed | Sealed watch |
+| Price | ~$30–43 | ~$27–35 (+ cradle if missing) |
+| Phone app | Fogg (to add); can also emulate InfiniTime's BLE for Gadgetbridge | Gadgetbridge now; Fogg would need porting |
+
+#### Table F — Where to buy (as found 2026-11-03; verify before buying)
+| Item | Shop | Price | Notes |
+|---|---|---|---|
+| Waveshare 2.06 | Waveshare store | $29.99–31.99 | No battery in standard version |
+| Waveshare 2.06 | OpenELAB (EU) | €35.54 | With battery |
+| Waveshare 2.06 | Electrokit (SE) | 595 SEK incl. VAT | Few in stock |
+| Waveshare 2.06 | eBay | $39.12 + $9.78 shipping | Varies by seller |
+| PineTime | PINE64 EU | €67.50 incl. VAT, free shipping | 48 h dispatch, 2-year warranty |
+| PineTime (refurb) | PINE64 EU | €42.50, free shipping | Includes charging cradle |
+| PineTime | Pine Store (CN) | $26.99 / $34.99 | UK: add import VAT and handling (~×1.5 rule of thumb) |
+| Either | Vinted | Not indexed by web search | Search in the app; check that the cradle (PineTime) or battery (Waveshare) is included |
+
+Open-source starting points for the Waveshare: waveshareteam/ESP32-S3-Touch-AMOLED-2.06 (official examples), 44xp4jdk5m-spec/esp32-s3-watch-os, withinaz/watch-esp32, cristianprice/ESP32-S3-Touch-AMOLED-2.06, ensmith0402/ensmith_watch_2.1 (deep sleep), infinition/waveshare-watch-rs (Rust). **Licences not yet checked.**
+
+### 3. Rejected Paths and Why
+- **Xiaomi Band / Amazfit:** require a vendor account (owner: "never having an account").
+- **openvela on the Waveshare:** not contradictory (Apache-2.0), but there is no board port (only an ESP32-S3-EYE guide). Every driver would have to be written first; ESP-IDF + LVGL has working drivers.
+- **Replacing the H19 firmware:** still rejected (Phase 6).
+
+### 4. Current Source-of-Truth Workflow
+- Hardware: **H19 + Fogg** is the daily driver. Waveshare or PineTime is a future option (owner deciding).
+
+### 5. Commit/Milestone Map
+- Docs-only commit for this phase.
+
+### 6. Next-Step Guidance
+- If a Waveshare is bought: start from the official examples (ESP-IDF + LVGL 9), add a first clock face, then BLE to Fogg; optionally InfiniTime-compatible BLE so Gadgetbridge works too. Check community licences before reusing code.
+- On the H19 now, see the Fogg improvement list in Phase 10 §8.
+
+### 7. Every Twist, Turn, and Tool Chain
+- Vinted listings are not indexed by web search; only an unrelated listing came back.
+- Prices came from shop pages via search snippets and may be stale.
+
+### 8. What Worked, What Did Not
+- Owner decisions: privacy first, never an account; H19 for now; Waveshare vs PineTime later.
+- **H19/Fogg status — done:** connect/bind/time; health sync (steps, HR, sleep, SpO2, BP); notifications; phone calls; notes; faces (photo, drawn, prayer gold/clean/ring, vector); prayer alerts + auto face; Quran reminders; weather; alarms; find watch; profile + step goal; HR auto-monitoring; dial-file install; rescue tools.
+- **Not yet done on the H19** (HryFine supports these; Fogg sends nothing or only SMA frames, which are now skipped): battery level (the standard Battery Service 0x180F exists), raise-to-wake, 12/24 h, units, wrist, sedentary/drink/medicine reminders (the Fogg reminder screens currently do nothing on the H19), DND, sleep-monitoring toggle, power save, language, camera shutter, music control, menstrual reminders (GIRL_CARE), WhatsApp call alerts, the SVG faces' missing clock, a classic-Bluetooth (call) pairing helper.
