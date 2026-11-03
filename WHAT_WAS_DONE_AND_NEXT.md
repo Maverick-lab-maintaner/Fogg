@@ -834,3 +834,53 @@ Open-source starting points for the Waveshare: waveshareteam/ESP32-S3-Touch-AMOL
 - Owner decisions: privacy first, never an account; H19 for now; Waveshare vs PineTime later.
 - **H19/Fogg status — done:** connect/bind/time; health sync (steps, HR, sleep, SpO2, BP); notifications; phone calls; notes; faces (photo, drawn, prayer gold/clean/ring, vector); prayer alerts + auto face; Quran reminders; weather; alarms; find watch; profile + step goal; HR auto-monitoring; dial-file install; rescue tools.
 - **Not yet done on the H19** (HryFine supports these; Fogg sends nothing or only SMA frames, which are now skipped): battery level (the standard Battery Service 0x180F exists), raise-to-wake, 12/24 h, units, wrist, sedentary/drink/medicine reminders (the Fogg reminder screens currently do nothing on the H19), DND, sleep-monitoring toggle, power save, language, camera shutter, music control, menstrual reminders (GIRL_CARE), WhatsApp call alerts, the SVG faces' missing clock, a classic-Bluetooth (call) pairing helper.
+
+## Phase 11 — H19 enhancements: watch settings, buttons, battery, phone-side reminders (2026-11-03, ~14:30–15:10)
+
+### 1. Chronological Timeline
+- Owner: "call alert are reaching my watch as notifications though from whats, dont hid features i cant use do the rest all of them now".
+- Built: battery, watch buttons (cmd 0x0C), a Watch settings screen, HryFine versions of the existing reminder/unit/clock/camera senders, and a calling-Bluetooth pairing helper. On connect, all 10 settings frames were acked and battery read 92%.
+- Owner tested. From the log: find phone ×3, camera open/shutter/close OK. Owner: "i think the medication reminder may not have worked". Cause: the 2A28 feature byte 15 = 0x66, and bit 0x08 (medicine) is **off** on the H19, so the firmware ignores key 32. Fix: phone-side medicine alarms.
+- Owner: "music button works, it says watch is already paired, and medicine it can sent as a message too".
+- Owner: "why does the fog send quran verse everytime i connect". Analysis: verses are sent only after prayer alerts (`quran_after_prayer` = true). The stored `quran_lang` = 0 (Arabic + English), so 2 messages per prayer; `quran_index` = 6 in total. Owner: "lets leave it as is".
+- Owner: "do them and lets do svg after" → hand-washing and period reminders made phone-side; push; SVG clock next.
+
+### 2. Technical Architecture Evolution
+- `HryFineProtocol`:
+  - Builders: `raiseToWake` (key 9), `raiseToWakeAllDay` (58), `doNotDisturb` (20), `doNotDisturbAllDay` (59), `wearHand` (6), `hourFormat` (26), `units` (27), `sedentary` (5), `drinkWater` (33), `medicines` (32, same layout as alarms via `timeList`), `cameraMode` (12).
+  - `BATTERY_SERVICE`/`BATTERY_LEVEL_CHAR`; `CMD_CONTROL` 0x0C with the `CTRL_*` codes.
+  - Package map: `.medicine` and `.reminder` → type 1.
+- `BleManager`:
+  - `readHryBattery()` and the battery branch in `onCharacteristicRead`.
+  - `onHryControl()`: find phone start/stop, shutter, open camera, media keys.
+  - `pushHryWatchSettings()` (on connect at 3.3 s and after edits); `pairHryCallBluetooth()` (BR/EDR `createBond` on BLE address with last byte ^ 0x55).
+  - `isHryMedicineNative()` from feature bit 0x08.
+  - HryFine branches in `sendCamera`, `sendHourSystem`, `sendUnits`, `sendSedentariness`, `sendDrinkWater`, `sendWash`, `sendGirlCare`; `readReminders` is a no-op on HryFine.
+- New `HryWatchSettingsActivity` (Device tab → "Watch settings", HryFine only): raise to wake, DND, wrist / clock / units, move reminder, drink water, 3 medicine times, calls-on-the-watch pairing, camera.
+- New receivers `MedicineReminders` and `PhoneReminders` (hand-washing every N min on chosen days and hours; period/ovulation N days ahead). They send "Medicine", "Hand washing" and "Period tracker" messages and are re-armed on boot via `BootReceiver`.
+
+### 3. Rejected Paths and Why
+- **Hiding unsupported features:** rejected by the owner. Unsupported ones (medicine, hand-washing, period) are done from the phone instead.
+- **Trusting acks as proof:** the medicine key was acked but ignored. Read the feature bits.
+
+### 4. Current Source-of-Truth Workflow
+- H19 feature bits (2A28, byte 15): `0x80` clear = raise-to-wake, `0x20` device info, `0x10` SDK, `0x08` medicine, `0x04` drink water, `0x02` new message push, `0x01` workout.
+- Watch settings live in prefs `hrw_*` (phone is the source of truth; the watch can't report them) and are re-sent on every connect.
+
+### 5. Commit/Milestone Map
+- `1223a8e` feat(hryfine): watch settings, battery, watch buttons, call pairing
+- `109803c` fix(hryfine): medicine reminders from the phone when the watch lacks them
+- feat(hryfine): hand-washing and period reminders from the phone (this phase)
+- This docs entry.
+
+### 6. Next-Step Guidance
+1. SVG faces: the watch shows no clock on them (next task).
+2. Optional: a verse-frequency option (after every prayer / Fajr + Maghrib / daily / off). Owner chose to leave it as is.
+
+### 7. Every Twist, Turn, and Tool Chain
+- The watch-to-phone control dispatch was found in HryFine `NotifyWriteUtils`: the `else` branch of `if (c != 12)` calls `BleDataUtils.setDeviceContro(key)`, so control frames are cmd 0x0C.
+- Music buttons work; they didn't show as 0x0C events in Fogg's log, so they may travel over the newly paired classic Bluetooth (AVRCP) instead.
+
+### 8. What Worked, What Did Not
+- Worked, confirmed by the owner or the log: find phone, camera, music, battery, all settings acked, calling Bluetooth paired, medicine via phone message.
+- Did not: native medicine on the H19 (firmware lacks it), now handled by the phone.
