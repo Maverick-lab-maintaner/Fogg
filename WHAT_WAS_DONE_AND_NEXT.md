@@ -940,3 +940,10 @@ Open-source starting points for the Waveshare: waveshareteam/ESP32-S3-Touch-AMOL
 ### 8. What Worked, What Did Not
 - Worked: signature designs sent cleanly after the CCCD fix; owner liked the Prayer Ring typography.
 - Did not: the watch's built-in digits look crude next to phone-rendered text. That is the motivation for the background-swap test.
+
+### Phase 12 result — background-swap test S1 (2026-11-03, ~16:20)
+- Built `TEST_S1_0466_nightdome.bin` (37.1 KB): real dial 0000000100030466 with all records and images unchanged, only 02/10 background (plain Night Dome + STEPS/KCAL/BPM labels) and 02/11 preview replaced.
+- Installed from the PC (`rescue.py --no-reboot`); attempts 1–3 timed out at the data stage, attempt 4 installed (0x83 OK).
+- Owner: "night dome is there, digits clean, seconds not ticking but, waatvh keeps going on and off". The scan saw `…03:6A` only once in 30 s, which suggests repeated restarts (no bootloader).
+- Reverted immediately with `rescue.py rescue_dial.bin` (installed first try); `stable.py 90` then showed STABLE (03:6A from 8 s to 70 s).
+- Unresolved: our background vs the three partial transfers. Test not repeated; owner asked whether to abandon the dial route.
