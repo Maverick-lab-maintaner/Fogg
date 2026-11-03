@@ -124,6 +124,11 @@ public class DeviceFragment extends Fragment implements BleManager.BleStateListe
         View btnWatchFaces = view.findViewById(R.id.btnWatchFaces);
         if (btnWatchFaces != null) {
             btnWatchFaces.setOnClickListener(v -> {
+                // HryFine watches have no SMA dial list: open their faces screen directly.
+                if (bleManager.isHryFine()) {
+                    startActivity(new Intent(requireContext(), com.example.dialsender.HryFacesActivity.class));
+                    return;
+                }
                 if (getActivity() instanceof com.example.dialsender.MainActivity) {
                     ((com.example.dialsender.MainActivity) getActivity())
                             .showFragment(new DialsFragment());

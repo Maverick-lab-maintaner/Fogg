@@ -80,9 +80,22 @@ public class HryFacesActivity extends AppCompatActivity {
         setContentView(scroll);
 
         // ---- Header
+        LinearLayout headRow = new LinearLayout(this);
+        headRow.setOrientation(LinearLayout.HORIZONTAL);
+        headRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView back = label("←  Watch faces", 24, theme.textPrimary, true);
         back.setOnClickListener(v -> finish());
-        root.addView(back);
+        headRow.addView(back, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView newDial = label("+  New", 14, theme.onAccent, true);
+        newDial.setGravity(Gravity.CENTER);
+        newDial.setPadding(dp(16), dp(9), dp(16), dp(9));
+        GradientDrawable nb = new GradientDrawable();
+        nb.setCornerRadius(dp(20));
+        nb.setColor(theme.accentPrimary);
+        newDial.setBackground(nb);
+        newDial.setOnClickListener(v -> startActivity(new android.content.Intent(this, DialEditorActivity.class)));
+        headRow.addView(newDial);
+        root.addView(headRow);
         TextView status = pill(ble.isHryFine() ? "●  Watch connected" : "●  Not connected — connect the watch first",
                 ble.isHryFine() ? theme.success : theme.warning);
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
