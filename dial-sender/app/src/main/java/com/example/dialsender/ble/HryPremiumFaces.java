@@ -328,7 +328,8 @@ public final class HryPremiumFaces {
         }
         Paint accent = new Paint(Paint.ANTI_ALIAS_FLAG);
         accent.setColor(0xFFFF7A45);
-        c.drawRoundRect(new RectF(w / 2f - 16, TIME_Y + 96, w / 2f + 16, TIME_Y + 99), 2, 2, accent);
+        if (!info)   // the prayer block sits here when shown
+            c.drawRoundRect(new RectF(w / 2f - 16, TIME_Y + 96, w / 2f + 16, TIME_Y + 99), 2, 2, accent);
         return 0xFFF2F2F4;
     }
 
