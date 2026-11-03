@@ -362,6 +362,14 @@
                 <TextView android:id="@+id/txtFindWatch" style="@style/Fogg.Row.Value" android:text="@string/find_watch_ring"/>
             </LinearLayout>
 
+            <!-- HryFine watch settings: raise to wake, DND, wrist, reminders, medicine. -->
+            <LinearLayout android:id="@+id/rowHryWatchSettings" style="?attr/foggRowStyle" android:visibility="gone">
+                <ImageView style="?attr/foggRowIconStyle" android:src="@drawable/ic_settings"
+                    android:contentDescription="@null"/>
+                <TextView style="@style/Fogg.Row.Label" android:text="Watch settings"/>
+                <TextView style="@style/Fogg.Row.Value" android:text="›"/>
+            </LinearLayout>
+
             <LinearLayout android:id="@+id/btnCamera" style="?attr/foggRowStyle">
                 <ImageView style="?attr/foggRowIconStyle" android:src="@drawable/ic_camera"
                     android:contentDescription="@null"/>

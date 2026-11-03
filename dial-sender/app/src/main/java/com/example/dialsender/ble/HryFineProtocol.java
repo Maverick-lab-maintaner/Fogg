@@ -415,6 +415,88 @@ final class HryFineProtocol {
      * An empty payload clears every alarm.
      */
     static byte[] alarms(java.util.List<int[]> list) {
+        return timeList((byte) 2, list);
+    }
+
+    /** Medicine reminders (setting key 32): same 5-byte layout as alarms. */
+    static byte[] medicines(java.util.List<int[]> list) {
+        return timeList((byte) 32, list);
+    }
+
+    // ---- Watch settings, layouts from HryFine 3.8.25 SettingIssuedUtils ----
+
+    static final java.util.UUID BATTERY_SERVICE = java.util.UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb");
+    static final java.util.UUID BATTERY_LEVEL_CHAR = java.util.UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb");
+
+    /** Watch → phone control (cmd 0x0C): key is the action. */
+    static final byte CMD_CONTROL = 0x0C;
+    static final int CTRL_FIND_PHONE = 1, CTRL_SHUTTER = 2, CTRL_CAMERA_OPEN = 3, CTRL_CAMERA_CLOSE = 4,
+            CTRL_PLAY = 10, CTRL_PAUSE = 11, CTRL_PREVIOUS = 12, CTRL_NEXT = 13, CTRL_FIND_PHONE_STOP = 15;
+
+    private static byte[] window(int key, boolean on, int startMin, int endMin) {
+        return frame(CMD_SETTING, (byte) key, new byte[] { (byte) (on ? 1 : 0),
+                (byte) (startMin >> 8), (byte) startMin, (byte) (endMin >> 8), (byte) endMin });
+    }
+
+    /** Raise wrist to wake (key 9) during a window, minutes after midnight. */
+    static byte[] raiseToWake(boolean on, int startMin, int endMin) {
+        return window(9, on, startMin, endMin);
+    }
+
+    /** Raise wrist to wake all day (key 58): 1 on, 0 off. */
+    static byte[] raiseToWakeAllDay(boolean on) {
+        return frame(CMD_SETTING, (byte) 58, new byte[] { (byte) (on ? 1 : 0) });
+    }
+
+    /** Do not disturb (key 20) during a window, minutes after midnight. */
+    static byte[] doNotDisturb(boolean on, int startMin, int endMin) {
+        return window(20, on, startMin, endMin);
+    }
+
+    /** Do not disturb all day (key 59). */
+    static byte[] doNotDisturbAllDay(boolean on) {
+        return frame(CMD_SETTING, (byte) 59, new byte[] { (byte) (on ? 1 : 0) });
+    }
+
+    /** Which wrist (key 6): 1 left, 2 right. */
+    static byte[] wearHand(boolean left) {
+        return frame(CMD_SETTING, (byte) 6, new byte[] { (byte) (left ? 1 : 2) });
+    }
+
+    /** Clock format (key 26): 0 = 24-hour, 1 = 12-hour. */
+    static byte[] hourFormat(boolean is24) {
+        return frame(CMD_SETTING, (byte) 26, new byte[] { (byte) (is24 ? 0 : 1) });
+    }
+
+    /** Units (key 27): 0 = metric, 1 = imperial. */
+    static byte[] units(boolean metric) {
+        return frame(CMD_SETTING, (byte) 27, new byte[] { (byte) (metric ? 0 : 1) });
+    }
+
+    /**
+     * Sit-too-long reminder (key 5): lunchBreak, on, step threshold(2),
+     * (interval-30)/15, start hour, end hour, repeat mask (bit0 = Monday).
+     */
+    static byte[] sedentary(boolean on, int intervalMin, int startHour, int endHour, int repeat) {
+        int threshold = 100;
+        int step = Math.max(0, (Math.max(intervalMin, 30) - 30) / 15);
+        return frame(CMD_SETTING, (byte) 5, new byte[] { 0, (byte) (on ? 1 : 0),
+                (byte) (threshold >> 8), (byte) threshold, (byte) step,
+                (byte) startHour, (byte) endHour, (byte) (repeat & 0x7F) });
+    }
+
+    /** Drink-water reminder (key 33): lunchBreak, on, interval/15, start hour, end hour, repeat. */
+    static byte[] drinkWater(boolean on, int intervalMin, int startHour, int endHour, int repeat) {
+        return frame(CMD_SETTING, (byte) 33, new byte[] { 0, (byte) (on ? 1 : 0),
+                (byte) (Math.max(intervalMin, 15) / 15), (byte) startHour, (byte) endHour, (byte) (repeat & 0x7F) });
+    }
+
+    /** Put the watch into (or out of) remote-camera mode (key 12). */
+    static byte[] cameraMode(boolean on) {
+        return frame(CMD_SETTING, (byte) 12, new byte[] { (byte) (on ? 1 : 0) });
+    }
+
+    private static byte[] timeList(byte key, java.util.List<int[]> list) {
         byte[] b = new byte[list.size() * 5];
         for (int i = 0; i < list.size(); i++) {
             int[] a = list.get(i); // year, month, day, hour, minute, slot, repeat
@@ -426,7 +508,7 @@ final class HryFineProtocol {
             b[o + 3] = (byte) (((mi & 3) << 6) + (slot << 3));
             b[o + 4] = (byte) (a[6] & 127);
         }
-        return frame(CMD_SETTING, (byte) 2, b);
+        return frame(CMD_SETTING, key, b);
     }
 
     /**

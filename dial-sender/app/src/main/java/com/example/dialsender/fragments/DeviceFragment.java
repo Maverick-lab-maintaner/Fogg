@@ -153,6 +153,12 @@ public class DeviceFragment extends Fragment implements BleManager.BleStateListe
         setupCallControl(view);
         // Find watch: works on HryFine watches only (SMA ignores FIND_WATCH 0x0234).
         setupFindWatch(view);
+        View rowHrySettings = view.findViewById(R.id.rowHryWatchSettings);
+        if (rowHrySettings != null) {
+            rowHrySettings.setVisibility(bleManager.isHryFine() ? View.VISIBLE : View.GONE);
+            rowHrySettings.setOnClickListener(v -> startActivity(
+                    new Intent(requireContext(), com.example.dialsender.HryWatchSettingsActivity.class)));
+        }
         setupMonitoring(view);
         setupStandbyRow(view, R.id.rowStandby, R.id.txtStandby);
 

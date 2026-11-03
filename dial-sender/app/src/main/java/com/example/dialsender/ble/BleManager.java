@@ -1024,6 +1024,15 @@ public class BleManager {
 
         @Override
         public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (hryMode && HryFineProtocol.BATTERY_LEVEL_CHAR.equals(characteristic.getUuid())) {
+                byte[] v = characteristic.getValue();
+                if (status == BluetoothGatt.GATT_SUCCESS && v != null && v.length > 0) {
+                    int level = v[0] & 0xFF;
+                    log("HryFine battery: " + level + "%");
+                    prefs.edit().putInt("battery_level", level).apply();
+                }
+                return;
+            }
             if (!hryMode || connectionState != ConnectionState.HRY_READING)
                 return;
             byte[] value = characteristic.getValue();
@@ -1202,6 +1211,28 @@ public class BleManager {
         flushQueue();
     }
 
+    /** Standard BLE Battery Level (0x180F/0x2A19); retried once if the link is mid-write. */
+    @SuppressLint("MissingPermission")
+    private void readHryBattery() {
+        handler.postDelayed(() -> {
+            BluetoothGatt g = bluetoothGatt;
+            if (g == null || !isSessionReady())
+                return;
+            BluetoothGattService svc = g.getService(HryFineProtocol.BATTERY_SERVICE);
+            BluetoothGattCharacteristic c = svc == null ? null : svc.getCharacteristic(HryFineProtocol.BATTERY_LEVEL_CHAR);
+            if (c == null) {
+                log("HryFine battery: no battery service");
+                return;
+            }
+            if (!g.readCharacteristic(c))
+                handler.postDelayed(() -> {
+                    BluetoothGatt g2 = bluetoothGatt;
+                    if (g2 != null && isSessionReady())
+                        g2.readCharacteristic(c);
+                }, 1500);
+        }, 300);
+    }
+
     @SuppressLint("MissingPermission")
     private boolean readHryChar(BluetoothGatt gatt, java.util.UUID charUuid) {
         BluetoothGattService info = gatt.getService(HryFineProtocol.DEVICE_INFO_SERVICE);
@@ -1372,6 +1403,8 @@ public class BleManager {
             } else if (key == 6 && p.length > 0 && p[0] == 1 && hryOtaStep == HryOta.ANNOUNCE) {
                 startHryOta();
             }
+        } else if (cmd == HryFineProtocol.CMD_CONTROL) {
+            onHryControl(key);
         } else if (cmd == HryFineProtocol.CMD_HEALTH) {
             int plen = ((f[7] & 0xFF) << 8) | (f[8] & 0xFF);
             onHryHealthFrame(key & 0xFF, Arrays.copyOfRange(f, 9, Math.min(f.length, 9 + plen)));
@@ -1767,6 +1800,125 @@ public class BleManager {
             prefs.edit().putString("health_" + name, kept.toString()).commit();
     }
 
+    /** Buttons pressed on the watch: find phone, camera shutter, music keys. */
+    private void onHryControl(int key) {
+        log("HryFine watch control: " + key);
+        switch (key) {
+            case HryFineProtocol.CTRL_FIND_PHONE:
+                startFindPhoneAlert();
+                forEachListener(BleStateListener::onFindPhoneRequest);
+                break;
+            case HryFineProtocol.CTRL_FIND_PHONE_STOP:
+                stopFindPhoneAlert();
+                break;
+            case HryFineProtocol.CTRL_SHUTTER:
+                if (cameraListener != null)
+                    handler.post(() -> cameraListener.onShutter());
+                break;
+            case HryFineProtocol.CTRL_CAMERA_OPEN:
+                try {
+                    context.startActivity(new Intent(context, com.example.dialsender.CameraActivity.class)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (RuntimeException e) {
+                    log("HryFine: could not open the camera screen (" + e.getMessage() + ")");
+                }
+                break;
+            case HryFineProtocol.CTRL_PLAY:
+                mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY);
+                break;
+            case HryFineProtocol.CTRL_PAUSE:
+                mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PAUSE);
+                break;
+            case HryFineProtocol.CTRL_PREVIOUS:
+                mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS);
+                break;
+            case HryFineProtocol.CTRL_NEXT:
+                mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT);
+                break;
+            default:
+                break;
+        }
+    }
+
+    /**
+     * The H19's calling Bluetooth (speaker/mic, classic BR/EDR) lives at the BLE
+     * address with the last byte XOR 0x55 (…03:6A → …03:3F). Without a bond it
+     * switches itself off. Returns a short status for the UI.
+     */
+    @SuppressLint("MissingPermission")
+    public String pairHryCallBluetooth() {
+        BluetoothGatt g = bluetoothGatt;
+        String ble = g != null ? g.getDevice().getAddress() : targetAddress;
+        if (ble == null || bluetoothAdapter == null)
+            return "Connect the watch first";
+        int last = Integer.parseInt(ble.substring(ble.length() - 2), 16) ^ 0x55;
+        String classic = ble.substring(0, ble.length() - 2) + String.format("%02X", last);
+        try {
+            android.bluetooth.BluetoothDevice d = bluetoothAdapter.getRemoteDevice(classic);
+            if (d.getBondState() == android.bluetooth.BluetoothDevice.BOND_BONDED)
+                return "Calling Bluetooth is already paired";
+            boolean started;
+            try {
+                // BR/EDR transport, so the phone pairs the calling side, not the BLE side.
+                started = (Boolean) d.getClass().getMethod("createBond", int.class).invoke(d, 1);
+            } catch (ReflectiveOperationException e) {
+                started = d.createBond();
+            }
+            log("HryFine: pairing calling Bluetooth " + classic.substring(classic.length() - 5) + " started=" + started);
+            return started ? "Pairing started — accept on the phone and the watch"
+                    : "Could not start pairing — use phone Settings → Bluetooth";
+        } catch (RuntimeException e) {
+            return "Could not start pairing — use phone Settings → Bluetooth";
+        }
+    }
+
+    private void mediaKey(int code) {
+        android.media.AudioManager am = (android.media.AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+        if (am == null)
+            return;
+        am.dispatchMediaKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, code));
+        am.dispatchMediaKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, code));
+    }
+
+    // ---------- HryFine watch settings (stored on the phone, re-sent on every connect)
+
+    public static final String HRW = "hrw_";
+
+    /** Send every stored HryFine watch setting; called on connect and after edits. */
+    public void pushHryWatchSettings() {
+        if (!hryMode || !isSessionReady())
+            return;
+        SharedPreferences p = prefs;
+        java.util.List<byte[]> f = new java.util.ArrayList<>();
+        boolean raise = p.getBoolean(HRW + "raise_on", true), raiseAll = p.getBoolean(HRW + "raise_allday", true);
+        f.add(HryFineProtocol.raiseToWakeAllDay(raise && raiseAll));
+        f.add(HryFineProtocol.raiseToWake(raise && !raiseAll, p.getInt(HRW + "raise_start", 7 * 60), p.getInt(HRW + "raise_end", 23 * 60)));
+        boolean dnd = p.getBoolean(HRW + "dnd_on", false), dndAll = p.getBoolean(HRW + "dnd_allday", false);
+        f.add(HryFineProtocol.doNotDisturbAllDay(dnd && dndAll));
+        f.add(HryFineProtocol.doNotDisturb(dnd && !dndAll, p.getInt(HRW + "dnd_start", 22 * 60), p.getInt(HRW + "dnd_end", 7 * 60)));
+        f.add(HryFineProtocol.wearHand(p.getBoolean(HRW + "left_wrist", true)));
+        f.add(HryFineProtocol.hourFormat(p.getBoolean(HRW + "h24", android.text.format.DateFormat.is24HourFormat(context))));
+        f.add(HryFineProtocol.units(p.getBoolean(HRW + "metric", true)));
+        f.add(HryFineProtocol.sedentary(p.getBoolean(HRW + "sit_on", false), p.getInt(HRW + "sit_every", 60),
+                p.getInt(HRW + "sit_start", 9), p.getInt(HRW + "sit_end", 21), 127));
+        f.add(HryFineProtocol.drinkWater(p.getBoolean(HRW + "drink_on", false), p.getInt(HRW + "drink_every", 120),
+                p.getInt(HRW + "drink_start", 9), p.getInt(HRW + "drink_end", 21), 127));
+        java.util.List<int[]> meds = new java.util.ArrayList<>();
+        Calendar today = Calendar.getInstance();
+        for (int i = 0; i < 3; i++)
+            if (p.getBoolean(HRW + "med" + i + "_on", false)) {
+                int m = p.getInt(HRW + "med" + i + "_time", 8 * 60 + i * 6 * 60);
+                meds.add(new int[] { today.get(Calendar.YEAR), today.get(Calendar.MONTH) + 1,
+                        today.get(Calendar.DAY_OF_MONTH), m / 60, m % 60, i, 127 });
+            }
+        f.add(HryFineProtocol.medicines(meds));
+        log("Tx HryFine watch settings: " + f.size() + " frames (raise=" + raise + " dnd=" + dnd + " meds=" + meds.size() + ")");
+        for (int i = 0; i < f.size(); i++) {
+            byte[] frame = f.get(i);
+            handler.postDelayed(() -> sendHryFrame(frame, null, 0), i * 250L);
+        }
+    }
+
     private void dropHryRecords(String name, long from, long to) {
         String raw = prefs.getString("health_" + name, "");
         if (raw.isEmpty())
@@ -1824,6 +1976,8 @@ public class BleManager {
         // Height/weight drive the watch's distance and calories; the goal drives its ring.
         handler.postDelayed(this::sendUserProfile, 2000);
         handler.postDelayed(this::sendStepGoal, 2600);
+        handler.postDelayed(this::readHryBattery, 3000);
+        handler.postDelayed(this::pushHryWatchSettings, 3300);
         handler.postDelayed(() -> PrayerScheduler.onWatchConnected(context), 4000);
         // Weather after the prayer face has had its turn on the link.
         handler.postDelayed(() -> WeatherSync.syncIfPossible(context, this), 9000);
@@ -3604,6 +3758,10 @@ public class BleManager {
 
     public void readBattery() {
         if (!isSessionReady()) return;
+        if (hryMode) {
+            readHryBattery();
+            return;
+        }
         log("Reading battery level...");
         byte[] msg = createMessage((byte) 0x02, (byte) 0x03, (byte) 0x10, null);
         enqueueLogicalFrame(msg);
@@ -3931,6 +4089,11 @@ public class BleManager {
     /** Unit system shown on the watch: 0 = metric, 1 = imperial. */
     public void sendUnits(int unit) {
         if (!isSessionReady()) return;
+        if (hryMode) {
+            prefs.edit().putBoolean(HRW + "metric", unit == 0).apply();
+            handler.post(() -> sendHryFrame(HryFineProtocol.units(unit == 0), null, 0));
+            return;
+        }
         log("Tx UNIT_SET=" + unit);
         enqueueLogicalFrame(createMessage((byte) 0x02, (byte) 0x11, (byte) 0x00,
                 new byte[] { (byte) clamp(unit, 0, 1) }));
@@ -4097,6 +4260,11 @@ public class BleManager {
      */
     public void sendHourSystem() {
         boolean is24 = android.text.format.DateFormat.is24HourFormat(context);
+        if (hryMode) {
+            boolean h24 = prefs.getBoolean(HRW + "h24", is24);
+            handler.post(() -> sendHryFrame(HryFineProtocol.hourFormat(h24), null, 0));
+            return;
+        }
         byte[] payload = new byte[] { (byte) (is24 ? 0x01 : 0x00) };
         byte[] msg = createMessage((byte) 0x02, (byte) 0x0E, (byte) 0x00, payload);
         log("Tx HOUR_SYSTEM: " + bytesToHex(payload));
@@ -4330,6 +4498,11 @@ public class BleManager {
     public void sendCamera(int state) {
         if (!isSessionReady())
             return;
+        if (hryMode) {
+            log("Tx HryFine CAMERA " + (state == CAMERA_ENTER ? "on" : "off"));
+            handler.post(() -> sendHryFrame(HryFineProtocol.cameraMode(state == CAMERA_ENTER), null, 0));
+            return;
+        }
         byte[] msg = createMessage((byte) 0x06, (byte) 0x01, (byte) 0x00, new byte[] { (byte) state });
         log("Tx CAMERA state=" + state);
         enqueueLogicalFrame(msg);
@@ -4621,6 +4794,8 @@ public class BleManager {
 
     /** Ask the watch for the reminder settings it is actually running. */
     public void readReminders() {
+        if (hryMode)
+            return;   // HryFine has no read-back; the phone holds the values (HRW_* prefs)
         if (!isSessionReady())
             return;
         log("Tx reminder READ 0x09/0x21/0x1A");
@@ -4643,6 +4818,13 @@ public class BleManager {
     public void sendSedentariness(boolean enabled, int repeat, int startHour, int startMinute,
                                  int endHour, int endMinute, int intervalMinutes) {
         if (!isSessionReady()) return;
+        if (hryMode) {
+            prefs.edit().putBoolean(HRW + "sit_on", enabled).putInt(HRW + "sit_every", intervalMinutes)
+                    .putInt(HRW + "sit_start", startHour).putInt(HRW + "sit_end", endHour).apply();
+            handler.post(() -> sendHryFrame(HryFineProtocol.sedentary(enabled, intervalMinutes, startHour, endHour,
+                    repeat == 0 ? 127 : repeat), null, 0));
+            return;
+        }
         byte b0 = (byte) ((enabled ? 0x80 : 0x00) | (repeat & 0x7F));
         byte[] payload = {
                 b0,
@@ -4669,6 +4851,13 @@ public class BleManager {
     public void sendDrinkWater(boolean enabled, int repeat, int startHour, int startMinute,
                                int endHour, int endMinute, int intervalMinutes) {
         if (!isSessionReady()) return;
+        if (hryMode) {
+            prefs.edit().putBoolean(HRW + "drink_on", enabled).putInt(HRW + "drink_every", intervalMinutes)
+                    .putInt(HRW + "drink_start", startHour).putInt(HRW + "drink_end", endHour).apply();
+            handler.post(() -> sendHryFrame(HryFineProtocol.drinkWater(enabled, intervalMinutes, startHour, endHour,
+                    repeat == 0 ? 127 : repeat), null, 0));
+            return;
+        }
         byte b0 = (byte) ((enabled ? 0x80 : 0x00) | (repeat & 0x7F));
         byte[] payload = {
                 b0,

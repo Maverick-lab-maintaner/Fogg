@@ -165,6 +165,7 @@
         </receiver>
 
         <activity android:name=".HryFacesActivity" android:exported="false"/>
+        <activity android:name=".HryWatchSettingsActivity" android:exported="false"/>
 
         <!-- Share -> "Send to watch" from any notes app -->
         <activity
