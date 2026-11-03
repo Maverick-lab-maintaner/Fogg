@@ -212,6 +212,49 @@ public class HryFacesActivity extends AppCompatActivity {
         }
         dsn.addView(note("“Load dial file” installs HryFine-format dial files (.bin) from HryFine’s dial store."));
 
+        // ---- Signature designs: original faces drawn in code around the centred clock
+        LinearLayout sp = panel("Signature designs", "Drawn for this watch, with the time in the centre");
+        LinearLayout srow = null;
+        for (int i = 0; i < com.example.dialsender.ble.HryPremiumFaces.count(); i++) {
+            if (i % 2 == 0) {
+                srow = gridRow();
+                sp.addView(srow);
+            }
+            final int si = i;
+            View card = card(com.example.dialsender.ble.HryPremiumFaces.NAMES[i], null, v -> {
+                if (!ble.isHryFine()) {
+                    Toast.makeText(this, "Connect the watch first", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                send(com.example.dialsender.ble.HryPremiumFaces.render(si, wh[0], wh[1]), false);
+            });
+            srow.addView(card);
+            ImageView simg = (ImageView) ((LinearLayout) card).getChildAt(0);
+            previews.execute(() -> {
+                HryFaces.Face f = com.example.dialsender.ble.HryPremiumFaces.render(si, wh[0], wh[1]);
+                // Keep a copy for review (app-private cache).
+                try (java.io.FileOutputStream o = new java.io.FileOutputStream(
+                        new java.io.File(getCacheDir(), "signature_" + si + ".png"))) {
+                    f.image.compress(Bitmap.CompressFormat.PNG, 100, o);
+                } catch (java.io.IOException ignored) {
+                }
+                runOnUiThread(() -> {
+                    simg.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    simg.setImageBitmap(f.image);
+                });
+            });
+        }
+        padRow(srow);
+
+        // ---- What the watch shows above/below its clock (applies to every face sent)
+        LinearLayout td = panel("Time display", "What the watch shows above and below the time on any face");
+        LinearLayout tdRow = new LinearLayout(this);
+        tdRow.setOrientation(LinearLayout.HORIZONTAL);
+        tdRow.addView(widgetButton("Above", BleManager.PREF_FACE_ABOVE), weightLp(false));
+        tdRow.addView(widgetButton("Below", BleManager.PREF_FACE_BELOW), weightLp(true));
+        td.addView(tdRow);
+        td.addView(note("Takes effect the next time you send a face."));
+
         // ---- Vector designs
         LinearLayout vp = panel("Vector designs", "Calligraphy, patterns and silhouettes drawn at the watch's exact size");
         LinearLayout vrow = null;
@@ -662,6 +705,34 @@ public class HryFacesActivity extends AppCompatActivity {
             p.addView(st);
         }
         return p;
+    }
+
+    private TextView widgetButton(String title, String pref) {
+        TextView b = button("", false, null);
+        Runnable show = () -> b.setText(title + ": " + (prefs.contains(pref)
+                ? BleManager.FACE_WIDGETS[prefs.getInt(pref, 0)] : "Face default"));
+        show.run();
+        String[] items = new String[BleManager.FACE_WIDGETS.length + 1];
+        items[0] = "Face default";
+        System.arraycopy(BleManager.FACE_WIDGETS, 0, items, 1, BleManager.FACE_WIDGETS.length);
+        b.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle(title + " the time")
+                .setSingleChoiceItems(items, prefs.contains(pref) ? prefs.getInt(pref, 0) + 1 : 0, (d, w) -> {
+                    if (w == 0)
+                        prefs.edit().remove(pref).apply();
+                    else
+                        prefs.edit().putInt(pref, w - 1).apply();
+                    show.run();
+                    d.dismiss();
+                }).show());
+        return b;
+    }
+
+    private LinearLayout.LayoutParams weightLp(boolean second) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        lp.topMargin = dp(14);
+        if (second)
+            lp.setMarginStart(dp(10));
+        return lp;
     }
 
     private TextView pill(String text, int color) {

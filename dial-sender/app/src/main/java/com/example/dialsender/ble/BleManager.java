@@ -1485,7 +1485,23 @@ public class BleManager {
     }
 
     /** style = {timeX, timeY, colorRGB565, above, below} (see HryFaces), null keeps the watch's. */
+    /** Widgets the watch can draw above/below its clock: 0 none, 1 date, 2 sleep, 3 heart rate, 4 steps. */
+    public static final String[] FACE_WIDGETS = { "Nothing", "Date", "Sleep", "Heart rate", "Steps" };
+    public static final String PREF_FACE_ABOVE = "face_widget_above", PREF_FACE_BELOW = "face_widget_below";
+
     public void sendHryCustomFace(android.graphics.Bitmap design, int[] style) {
+        if (style != null && style.length >= 5) {
+            style = style.clone();
+            if (prefs.contains(PREF_FACE_ABOVE))
+                style[3] = prefs.getInt(PREF_FACE_ABOVE, style[3]);
+            if (prefs.contains(PREF_FACE_BELOW))
+                style[4] = prefs.getInt(PREF_FACE_BELOW, style[4]);
+        }
+        final int[] st = style;
+        sendHryCustomFaceStyled(design, st);
+    }
+
+    private void sendHryCustomFaceStyled(android.graphics.Bitmap design, int[] style) {
         handler.post(() -> {
             if (!isHryFine() || hryOtaStep != HryOta.NONE) {
                 forEachListener(l -> l.onTransferFailed(hryOtaStep != HryOta.NONE ? "transfer already running" : "not connected"));
