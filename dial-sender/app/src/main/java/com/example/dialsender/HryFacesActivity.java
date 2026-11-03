@@ -213,7 +213,7 @@ public class HryFacesActivity extends AppCompatActivity {
         dsn.addView(note("“Load dial file” installs HryFine-format dial files (.bin) from HryFine’s dial store."));
 
         // ---- Signature designs: original faces drawn in code around the centred clock
-        LinearLayout sp = panel("Signature designs", "Drawn for this watch, with the time in the centre");
+        LinearLayout sp = panel("Signature designs", "Time in the centre, next prayer and Hijri + normal date — kept up to date");
         LinearLayout srow = null;
         for (int i = 0; i < com.example.dialsender.ble.HryPremiumFaces.count(); i++) {
             if (i % 2 == 0) {
@@ -226,12 +226,14 @@ public class HryFacesActivity extends AppCompatActivity {
                     Toast.makeText(this, "Connect the watch first", Toast.LENGTH_SHORT).show();
                     return;
                 }
-                send(com.example.dialsender.ble.HryPremiumFaces.render(si, wh[0], wh[1]), false);
+                // Becomes the auto-updating prayer face: repainted after each prayer and at midnight.
+                prefs.edit().putString(PrayerScheduler.PREF_PRAYER_PHOTO, PrayerScheduler.SIG + si).apply();
+                send(PrayerScheduler.prayerFace(this, wh[0], wh[1]), true);
             });
             srow.addView(card);
             ImageView simg = (ImageView) ((LinearLayout) card).getChildAt(0);
             previews.execute(() -> {
-                HryFaces.Face f = com.example.dialsender.ble.HryPremiumFaces.render(si, wh[0], wh[1]);
+                HryFaces.Face f = com.example.dialsender.ble.HryPremiumFaces.render(this, si, wh[0], wh[1], times, now);
                 // Keep a copy for review (app-private cache).
                 try (java.io.FileOutputStream o = new java.io.FileOutputStream(
                         new java.io.File(getCacheDir(), "signature_" + si + ".png"))) {

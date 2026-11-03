@@ -120,10 +120,20 @@ public class PrayerScheduler extends BroadcastReceiver {
 
     /** PREF_PRAYER_PHOTO value meaning "the 24-hour prayer ring" instead of a photo. */
     public static final String RING = "@ring";
+    /** PREF_PRAYER_PHOTO prefix for a signature design with prayer info ("@sig:2"). */
+    public static final String SIG = "@sig:";
 
     public static HryFaces.Face prayerFace(Context c, int w, int h) {
         if (RING.equals(prefs(c).getString(PREF_PRAYER_PHOTO, "")))
             return HryFaces.prayerRing(c, w, h, today(c), System.currentTimeMillis());
+        String chosen = prefs(c).getString(PREF_PRAYER_PHOTO, "");
+        if (chosen.startsWith(SIG)) {
+            try {
+                int i = Integer.parseInt(chosen.substring(SIG.length()));
+                return HryPremiumFaces.render(c, i, w, h, today(c), System.currentTimeMillis());
+            } catch (NumberFormatException ignored) {
+            }
+        }
         HryFaces.Photo photo = HryFaces.photoByFile(c, prefs(c).getString(PREF_PRAYER_PHOTO, ""));
         if (photo != null) {
             android.graphics.Bitmap src = HryFaces.loadPhoto(c, photo);

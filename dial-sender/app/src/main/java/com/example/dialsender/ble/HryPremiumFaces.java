@@ -23,29 +23,124 @@ public final class HryPremiumFaces {
     }
 
     public static final String[] NAMES = { "Mihrab Arch", "Night Dome", "Zellige", "Minimal Dark", "Aurora" };
-    private static final int TIME_X = 20, TIME_Y = 100;
+    /** The watch's clock block is ~100 px wide (HryFine caps x at 140 on 240 px), so x 70 centres it. */
+    private static final int TIME_X = 70, TIME_Y = 100;
 
     public static int count() {
         return NAMES.length;
     }
 
     public static HryFaces.Face render(int index, int w, int h) {
+        return render(null, index, w, h, null, 0);
+    }
+
+    /** Is the info block (next prayer, dates) drawn above the clock for this design? */
+    private static boolean infoOnTop(int index) {
+        return index == 1;
+    }
+
+    /**
+     * With {@code times} (today's prayer times), the face also carries the next
+     * prayer and the Gregorian + Hijri dates. Fogg repaints it after each prayer
+     * and just after midnight, so these stay correct.
+     */
+    public static HryFaces.Face render(android.content.Context ctx, int index, int w, int h, long[] times, long now) {
+        fonts(ctx);
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
+        boolean info = times != null;
         int clock;
         switch (index) {
-            case 0: clock = mihrab(c, w, h); break;
-            case 1: clock = nightDome(c, w, h); break;
-            case 2: clock = zellige(c, w, h); break;
-            case 3: clock = minimal(c, w, h); break;
+            case 0: clock = mihrab(c, w, h, info); break;
+            case 1: clock = nightDome(c, w, h, info); break;
+            case 2: clock = zellige(c, w, h, info); break;
+            case 3: clock = minimal(c, w, h, info); break;
             default: clock = aurora(c, w, h); break;
         }
+        if (info)
+            info(c, w, times, now, infoOnTop(index), clock, index == 3 ? 206 : 200);
         return new HryFaces.Face(b, new int[] { TIME_X, TIME_Y, HryFaces.rgb565(clock), 0, 0 });
+    }
+
+    private static android.graphics.Typeface cinzel;
+
+    /** Cinzel (SIL OFL), the face used on the Prayer Ring; falls back to serif. */
+    static void fonts(android.content.Context ctx) {
+        if (cinzel != null || ctx == null)
+            return;
+        try {
+            cinzel = android.graphics.Typeface.createFromAsset(ctx.getAssets(), "fonts/hry/Cinzel.ttf");
+        } catch (RuntimeException e) {
+            cinzel = android.graphics.Typeface.SERIF;
+        }
+    }
+
+    /**
+     * Prayer Ring-style block, sized by importance:
+     *   NEXT PRAYER          (small, spaced, muted)
+     *   MAGHRIB  16:35       (prayer name large gold Cinzel, time bold white)
+     *   TUE 3 NOV · 23 JUMADA I 1448   (small, spaced, muted)
+     */
+    private static void info(Canvas c, int w, long[] t, long now, boolean top, int accent, int belowY) {
+        int[] rows = { PrayerTimes.FAJR, PrayerTimes.DHUHR, PrayerTimes.ASR, PrayerTimes.MAGHRIB, PrayerTimes.ISHA };
+        int next = -1;
+        for (int r : rows)
+            if (t[r] > now) { next = r; break; }
+        java.text.SimpleDateFormat hm = new java.text.SimpleDateFormat("HH:mm", java.util.Locale.ENGLISH);
+        String name = next >= 0 ? PrayerTimes.NAMES[next].toUpperCase(java.util.Locale.ENGLISH) : "ISHA PRAYED";
+        String time = next >= 0 ? hm.format(new java.util.Date(t[next])) : "";
+        String greg = new java.text.SimpleDateFormat("EEE d MMM", java.util.Locale.ENGLISH).format(new java.util.Date(now));
+        String hij = hijri(now);
+        String dates = (hij.isEmpty() ? greg : greg + "  ·  " + hij).toUpperCase(java.util.Locale.ENGLISH);
+
+        float y0 = top ? 42 : belowY;          // label baseline
+        Paint lab = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
+        lab.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        lab.setTextSize(8.5f);
+        lab.setLetterSpacing(0.18f);
+        lab.setColor(0xFF8FA3BF);
+        lab.setTextAlign(Paint.Align.CENTER);
+        c.drawText(next >= 0 ? "NEXT PRAYER" : "TONIGHT", w / 2f, y0, lab);
+
+        Paint big = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
+        big.setTypeface(cinzel != null ? android.graphics.Typeface.create(cinzel, android.graphics.Typeface.BOLD)
+                : android.graphics.Typeface.SERIF);
+        big.setTextSize(19);
+        big.setShader(HryFaces.foil(w / 2f - 70, 0, w / 2f + 70, 0));
+        big.setShadowLayer(3, 0, 1, 0xB0000000);
+        Paint tp = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
+        tp.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        tp.setTextSize(15);
+        tp.setColor(0xFFFFFFFF);
+        tp.setShadowLayer(3, 0, 1, 0xB0000000);
+        float gap = time.isEmpty() ? 0 : 9;
+        float wn = big.measureText(name), wt = time.isEmpty() ? 0 : tp.measureText(time);
+        float x = w / 2f - (wn + gap + wt) / 2f, y1 = y0 + 22;
+        c.drawText(name, x, y1, big);
+        if (!time.isEmpty())
+            c.drawText(time, x + wn + gap, y1, tp);
+
+        Paint dp = new Paint(lab);
+        dp.setTextSize(8.5f);
+        dp.setLetterSpacing(0.10f);
+        dp.setColor(0xFFC9D3E0);
+        c.drawText(dates, w / 2f, y1 + 17, dp);
+    }
+
+    private static String hijri(long now) {
+        try {
+            android.icu.util.ULocale loc = new android.icu.util.ULocale("en@calendar=islamic-umalqura");
+            android.icu.util.Calendar cal = android.icu.util.Calendar.getInstance(loc);
+            cal.setTimeInMillis(now);
+            return new android.icu.text.SimpleDateFormat("d MMMM y", loc).format(cal.getTime());
+        } catch (RuntimeException e) {
+            return "";
+        }
     }
 
     // ------------------------------------------------------------ Mihrab Arch
 
-    private static int mihrab(Canvas c, int w, int h) {
+    private static int mihrab(Canvas c, int w, int h, boolean info) {
         vertical(c, w, h, 0xFF0D4434, 0xFF041610);
         HryFaces.starPattern(c, w, h, 0x0FE3C267, 30);
         vignette(c, w, h, 0xA0000000);
@@ -97,14 +192,15 @@ public final class HryPremiumFaces {
         Paint rule = new Paint(Paint.ANTI_ALIAS_FLAG);
         rule.setShader(HryFaces.foil(l, 0, r, 0));
         c.drawRect(l + 22, base - 22, r - 22, base - 21, rule);
-        for (int i = -1; i <= 1; i++)
-            star8(c, w / 2f + i * 22, base - 36, i == 0 ? 5 : 3.5f, rule);
+        if (!info)
+            for (int i = -1; i <= 1; i++)
+                star8(c, w / 2f + i * 22, base - 36, i == 0 ? 5 : 3.5f, rule);
         return 0xFFF6E3A1;
     }
 
     // ------------------------------------------------------------ Night Dome
 
-    private static int nightDome(Canvas c, int w, int h) {
+    private static int nightDome(Canvas c, int w, int h, boolean info) {
         Paint sky = new Paint();
         sky.setShader(new LinearGradient(0, 0, 0, h, new int[] { 0xFF050B1E, 0xFF0F2A52, 0xFF1D5662 },
                 new float[] { 0f, 0.62f, 1f }, Shader.TileMode.CLAMP));
@@ -113,12 +209,15 @@ public final class HryPremiumFaces {
         Paint star = new Paint(Paint.ANTI_ALIAS_FLAG);
         for (int i = 0; i < 90; i++) {
             float x = rnd.nextFloat() * w, y = rnd.nextFloat() * 205;
-            if (y > 92 && y < 196 && x > 18 && x < w - 18)
-                continue;   // keep the clock area clean
+            if (y > (info ? 40 : 92) && y < 196 && x > 18 && x < w - 18)
+                continue;   // keep the clock (and info) area clean
             star.setColor((150 + rnd.nextInt(105)) << 24 | 0xFFFFFF);
             c.drawCircle(x, y, 0.4f + rnd.nextFloat() * 1.1f, star);
         }
-        HryFaces.crescent(c, w - 48, 44, 15, HryFaces.foil(w - 66, 26, w - 30, 62));
+        if (info)
+            HryFaces.crescent(c, w / 2f, 26, 10, HryFaces.foil(w / 2f - 12, 14, w / 2f + 12, 38));
+        else
+            HryFaces.crescent(c, w - 48, 44, 15, HryFaces.foil(w - 66, 26, w - 30, 62));
 
         // skyline: central dome, two small domes, two minarets — all below the clock
         Paint ink = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -159,7 +258,7 @@ public final class HryPremiumFaces {
 
     // ------------------------------------------------------------ Zellige
 
-    private static int zellige(Canvas c, int w, int h) {
+    private static int zellige(Canvas c, int w, int h, boolean info) {
         Paint bg = new Paint();
         bg.setShader(new RadialGradient(w / 2f, h / 2f, h * 0.75f, 0xFF12325A, 0xFF060E1F, Shader.TileMode.CLAMP));
         c.drawRect(0, 0, w, h, bg);
@@ -180,10 +279,11 @@ public final class HryPremiumFaces {
         fade.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_OUT));
         // Fully clear a soft-edged band where the clock sits (x 20–220, y 100–188), then
         // fade the rest gently towards the centre.
-        fade.setShader(new LinearGradient(0, TIME_Y - 26, 0, TIME_Y + 114,
-                new int[] { 0x00000000, 0xFF000000, 0xFF000000, 0x00000000 }, new float[] { 0f, 0.2f, 0.8f, 1f },
+        float clearEnd = info ? TIME_Y + 160 : TIME_Y + 114;
+        fade.setShader(new LinearGradient(0, TIME_Y - 26, 0, clearEnd,
+                new int[] { 0x00000000, 0xFF000000, 0xFF000000, 0x00000000 }, new float[] { 0f, 0.15f, 0.85f, 1f },
                 Shader.TileMode.CLAMP));
-        lc.drawRect(14, TIME_Y - 26, w - 14, TIME_Y + 114, fade);
+        lc.drawRect(14, TIME_Y - 26, w - 14, clearEnd, fade);
         Paint soft = new Paint(Paint.ANTI_ALIAS_FLAG);
         soft.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_OUT));
         soft.setShader(new RadialGradient(w / 2f, TIME_Y + 44, 150, 0x99000000, 0x00000000, Shader.TileMode.CLAMP));
@@ -199,13 +299,14 @@ public final class HryPremiumFaces {
         Paint mark = new Paint(Paint.ANTI_ALIAS_FLAG);
         mark.setShader(HryFaces.foil(w / 2f - 8, 0, w / 2f + 8, 0));
         star8(c, w / 2f, 52, 9, mark);
-        star8(c, w / 2f, h - 46, 7, mark);
+        if (!info)
+            star8(c, w / 2f, h - 46, 7, mark);
         return 0xFFF6E3A1;
     }
 
     // ------------------------------------------------------------ Minimal Dark
 
-    private static int minimal(Canvas c, int w, int h) {
+    private static int minimal(Canvas c, int w, int h, boolean info) {
         vertical(c, w, h, 0xFF16181D, 0xFF0A0B0E);
         Paint tick = new Paint(Paint.ANTI_ALIAS_FLAG);
         RectF ring = new RectF(10, 10, w - 10, h - 10);

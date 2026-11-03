@@ -66,7 +66,7 @@ public final class HrySvgFaces {
     }
 
     /** Where the watch draws its clock on vector faces: a ~200×88 px block, centred. */
-    static final int TIME_X = 20, TIME_Y = 100, TIME_H = 88;
+    static final int TIME_X = 70, TIME_Y = 100, TIME_H = 88;
 
     /** Null if the SVG cannot be read. */
     public static HryFaces.Face render(Context ctx, int index, int w, int h) {
