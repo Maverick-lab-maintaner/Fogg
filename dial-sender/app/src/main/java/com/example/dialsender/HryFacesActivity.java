@@ -106,7 +106,16 @@ public class HryFacesActivity extends AppCompatActivity {
         pt.addView(toggle("Keep the prayer face up to date", PrayerScheduler.PREF_FACE_AUTO));
         pt.addView(toggle("Hanafi Asr (later Asr time)", PrayerScheduler.PREF_HANAFI));
         pt.addView(toggle("Clean layout (light panel)", PrayerScheduler.PREF_CLEAN));
-        pt.addView(button("Update my location", false, v -> askLocation()));
+        LinearLayout locRow = new LinearLayout(this);
+        locRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        l1.topMargin = dp(14);
+        LinearLayout.LayoutParams l2 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        l2.topMargin = dp(14);
+        l2.setMarginStart(dp(10));
+        locRow.addView(button("Use my location", false, v -> askLocation()), l1);
+        locRow.addView(button("Choose city", false, v -> chooseCity()), l2);
+        pt.addView(locRow);
 
         // ---- Quranic reminders
         LinearLayout qr = panel("Quranic reminders", QuranReminders.all(this).size()
@@ -431,6 +440,37 @@ public class HryFacesActivity extends AppCompatActivity {
 
     // ------------------------------------------------------------ prayer
 
+    /** Type a city: works with phone location switched off. */
+    private void chooseCity() {
+        android.widget.EditText in = new android.widget.EditText(this);
+        in.setHint("City, e.g. Birmingham");
+        in.setSingleLine(true);
+        android.widget.FrameLayout box = new android.widget.FrameLayout(this);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        box.addView(in);
+        new AlertDialog.Builder(this).setTitle("Prayer times for which city?").setView(box)
+                .setPositiveButton("Use this city", (d, w) -> {
+                    String q = in.getText().toString();
+                    Toast.makeText(this, "Looking up " + q + "…", Toast.LENGTH_SHORT).show();
+                    new Thread(() -> {
+                        String place = PrayerScheduler.chooseCity(this, q);
+                        runOnUiThread(() -> {
+                            if (place == null) {
+                                Toast.makeText(this, "City not found — check the spelling or your internet",
+                                        Toast.LENGTH_LONG).show();
+                                return;
+                            }
+                            showTimes();
+                            PrayerScheduler.schedule(this);
+                            PrayerScheduler.pushFace(this);
+                            com.example.dialsender.ble.WeatherSync.syncIfPossible(this, ble);
+                            Toast.makeText(this, "Using " + place, Toast.LENGTH_SHORT).show();
+                        });
+                    }).start();
+                })
+                .setNegativeButton("Cancel", null).show();
+    }
+
     private void askLocation() {
         boolean granted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
@@ -494,6 +534,10 @@ public class HryFacesActivity extends AppCompatActivity {
         }
         double[] ll = PrayerScheduler.location(this);
         StringBuilder sb = new StringBuilder();
+        String place = PrayerScheduler.placeName(this);
+        if (!place.isEmpty())
+            sb.append("Times for ").append(place)
+                    .append(PrayerScheduler.isManual(this) ? " (chosen)" : " (phone location)").append("\n");
         sb.append("Sunrise ").append(hm.format(new Date(t[PrayerTimes.SUNRISE])))
                 .append("  ·  Qibla ").append(PrayerTimes.qibla(ll[0], ll[1])).append("° from north");
         if (next < 0)
@@ -529,7 +573,7 @@ public class HryFacesActivity extends AppCompatActivity {
             if (PrayerScheduler.PREF_HANAFI.equals(pref))
                 showTimes();
             if (on && PrayerScheduler.PREF_FACE_AUTO.equals(pref))
-                PrayerScheduler.pushFace(this);
+                PrayerScheduler.pushFaceNow(this);
             if (PrayerScheduler.PREF_CLEAN.equals(pref)) {
                 PrayerScheduler.pushFace(this);
                 recreate();

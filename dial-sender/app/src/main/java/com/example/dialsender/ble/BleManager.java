@@ -707,6 +707,11 @@ public class BleManager {
         }
     }
 
+    /** True while a health sync or a face/dial transfer is using the link. */
+    public boolean isBusy() {
+        return healthKeyIndex >= 0 || hryOtaStep != HryOta.NONE || isFileTransferActive;
+    }
+
     public boolean isSessionReady() {
         return isConnected && connectionState == ConnectionState.SESSION_READY;
     }
@@ -893,6 +898,12 @@ public class BleManager {
                 healthKeyIndex = -1;
                 healthPageCount = 0;
                 lastHealthPageFingerprint = 0;
+                if (hryOtaStep != HryOta.NONE) {
+                    log("HryFine face: link lost during transfer — abandoned");
+                    hryOtaStep = HryOta.NONE;
+                    hryPendingPar = null;
+                    forEachListener(l -> l.onTransferFailed("connection lost"));
+                }
                 if (wasConnected || !isReconnecting) {
                     notifyConnectionState(false, false);
                 }
@@ -1005,6 +1016,7 @@ public class BleManager {
                 return;
             }
             if (data != null) {
+                lastRxMs = System.currentTimeMillis();
                 log("Rx [" + data.length + "]: " + bytesToHex(data));
                 onRxChunk(data);
             }
@@ -2867,6 +2879,33 @@ public class BleManager {
         requestHealthKey(key, BleKeyFlag.DELETE.getValue());
     }
 
+    private long lastRxMs;
+    private long lastSilentRecoveryMs;
+    private int smaDropLogged;
+
+    /**
+     * The BLE link can stay up while the watch's protocol side has gone quiet
+     * (seen on the H19: link alive for hours, zero replies, no steps synced).
+     * If nothing at all came back for a minute, drop the link so the normal
+     * auto-reconnect builds a fresh session. At most once every 5 minutes.
+     */
+    @SuppressLint("MissingPermission")
+    private void recoverSilentHryLink() {
+        long now = System.currentTimeMillis();
+        if (now - lastRxMs < 60_000 || now - lastSilentRecoveryMs < 5 * 60_000)
+            return;
+        BluetoothGatt gatt = bluetoothGatt;
+        if (gatt == null)
+            return;
+        lastSilentRecoveryMs = now;
+        log("HryFine: no reply from the watch for " + ((now - lastRxMs) / 1000) + " s — reconnecting");
+        try {
+            gatt.disconnect();
+        } catch (RuntimeException e) {
+            log("HryFine: reconnect failed (" + e + ")");
+        }
+    }
+
     /** The watch did not answer a health request — move on rather than wedge. */
     private void onHealthTimeout() {
         if (healthKeyIndex < 0)
@@ -2874,6 +2913,7 @@ public class BleManager {
         if (hryMode) {
             log("HryFine health: watch went quiet — finishing sync");
             finishHryHealthSync();
+            recoverSilentHryLink();
             return;
         }
         int key = activeHealthKeys[Math.min(healthKeyIndex, activeHealthKeys.length - 1)];
@@ -3401,6 +3441,15 @@ public class BleManager {
     }
 
     private void enqueueLogicalFrame(byte[] frame) {
+        // HryFine watches only understand DF data frames and FD acks. SMA frames
+        // (music, reminders, goals, ...) reached the H19 from many code paths and
+        // are the prime suspect for its command handler going silent.
+        if (hryMode && frame != null && frame.length > 0
+                && frame[0] != HryFineProtocol.DATA_HEADER && frame[0] != HryFineProtocol.ACK_HEADER) {
+            if (smaDropLogged++ < 20)
+                log("Skipped SMA-format frame on HryFine watch (" + frame.length + " B)");
+            return;
+        }
         int offset = 0;
         while (offset < frame.length) {
             int remaining = frame.length - offset;

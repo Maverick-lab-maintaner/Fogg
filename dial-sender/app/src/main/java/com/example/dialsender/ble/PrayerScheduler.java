@@ -27,6 +27,10 @@ public class PrayerScheduler extends BroadcastReceiver {
     public static final String PREF_HANAFI = "prayer_hanafi";
     public static final String PREF_CLEAN = "prayer_clean_layout";
     private static final String PREF_LAT = "prayer_lat", PREF_LON = "prayer_lon";
+    /** A city the user picked by name; GPS refreshes leave it alone. */
+    public static final String PREF_MANUAL = "prayer_manual_location";
+    public static final String PREF_PLACE = "prayer_place_name";
+    private static final String PREF_LOC_TIME = "prayer_location_time";
     private static final String ACTION = "com.example.dialsender.PRAYER_TICK";
     private static final String EXTRA_PRAYER = "prayer";
 
@@ -38,10 +42,60 @@ public class PrayerScheduler extends BroadcastReceiver {
         return prefs(c).contains(PREF_LAT);
     }
 
-    /** Blocking (up to ~12 s): refresh the cached location. Call off the main thread. */
+    /**
+     * Blocking (up to ~12 s): refresh the cached location from the phone.
+     * Call off the main thread. A city chosen by name is kept unless {@code force}.
+     */
     public static void refreshLocation(Context c) {
-        double[] ll = WeatherSync.currentLocation(c.getApplicationContext());
-        prefs(c).edit().putFloat(PREF_LAT, (float) ll[0]).putFloat(PREF_LON, (float) ll[1]).apply();
+        refreshLocation(c, true);
+    }
+
+    public static void refreshLocation(Context c, boolean force) {
+        SharedPreferences p = prefs(c);
+        if (p.getBoolean(PREF_MANUAL, false) && !force)
+            return;
+        double[] ll = WeatherSync.currentLocation(c.getApplicationContext(), false);
+        String place = WeatherSync.placeName(c.getApplicationContext(), ll[0], ll[1]);
+        p.edit().putFloat(PREF_LAT, (float) ll[0]).putFloat(PREF_LON, (float) ll[1])
+                .putBoolean(PREF_MANUAL, false).putString(PREF_PLACE, place)
+                .putLong(PREF_LOC_TIME, System.currentTimeMillis()).apply();
+    }
+
+    /**
+     * Blocking: look a city up by name (Open-Meteo geocoding, no key, no account)
+     * and use it for prayer times and weather. Returns the place found, or null.
+     */
+    public static String chooseCity(Context c, String query) {
+        double[] r = new double[2];
+        String name = WeatherSync.geocode(query, r);
+        if (name == null)
+            return null;
+        prefs(c).edit().putFloat(PREF_LAT, (float) r[0]).putFloat(PREF_LON, (float) r[1])
+                .putFloat("weather_lat", (float) r[0]).putFloat("weather_lon", (float) r[1])
+                .putBoolean(PREF_MANUAL, true).putString(PREF_PLACE, name)
+                .putLong(PREF_LOC_TIME, System.currentTimeMillis()).apply();
+        return name;
+    }
+
+    public static String placeName(Context c) {
+        return prefs(c).getString(PREF_PLACE, "");
+    }
+
+    public static boolean isManual(Context c) {
+        return prefs(c).getBoolean(PREF_MANUAL, false);
+    }
+
+    /** Refresh a GPS-based location in the background if it is over 12 hours old. */
+    private static void refreshIfStale(Context c) {
+        SharedPreferences p = prefs(c);
+        if (p.getBoolean(PREF_MANUAL, false)
+                || System.currentTimeMillis() - p.getLong(PREF_LOC_TIME, 0) < 12 * 3600_000L)
+            return;
+        Context app = c.getApplicationContext();
+        new Thread(() -> {
+            refreshLocation(app, false);
+            schedule(app);
+        }).start();
     }
 
     public static double[] location(Context c) {
@@ -86,16 +140,57 @@ public class PrayerScheduler extends BroadcastReceiver {
                 : HryFaces.prayerOnPhoto(c, src, w, h, times, now);
     }
 
+    private static final String PREF_FACE_SIG = "prayer_face_last_sent";
+
     /** Repaint the prayer face if the user chose it and the watch is reachable. */
     public static void pushFace(Context c) {
-        if (!prefs(c).getBoolean(PREF_FACE_AUTO, false))
+        pushFace(c, false, 0);
+    }
+
+    /** Send the face now even if it looks unchanged (the user picked it). */
+    public static void pushFaceNow(Context c) {
+        pushFace(c, true, 0);
+    }
+
+    /**
+     * A face is ~80 KB over a slow link. Starting it while the health sync was
+     * running made the H19 drop the connection within a second, every time it
+     * connected. So: wait until the link is idle, and skip it entirely when the
+     * watch already shows this face (same layout, photo, day and next prayer).
+     */
+    private static void pushFace(Context c, boolean force, int attempt) {
+        Context app = c.getApplicationContext();
+        if (!prefs(app).getBoolean(PREF_FACE_AUTO, false))
             return;
-        BleManager ble = BleManager.getInstance(c.getApplicationContext());
-        if (!ble.isHryFine())
+        BleManager ble = BleManager.getInstance(app);
+        if (!ble.isHryFine() || !ble.isSessionReady())
+            return;
+        if (ble.isBusy()) {
+            if (attempt < 8)
+                new android.os.Handler(android.os.Looper.getMainLooper())
+                        .postDelayed(() -> pushFace(app, force, attempt + 1), 15000);
+            return;
+        }
+        String sig = faceSignature(app);
+        if (!force && sig.equals(prefs(app).getString(PREF_FACE_SIG, "")))
             return;
         int[] wh = ble.getHryScreenSize();
-        HryFaces.Face f = prayerFace(c, wh[0], wh[1]);
+        HryFaces.Face f = prayerFace(app, wh[0], wh[1]);
+        prefs(app).edit().putString(PREF_FACE_SIG, sig).apply();
         ble.sendHryCustomFace(f.image, f.style);
+    }
+
+    /** What the prayer face shows: layout, photo, date and the coming prayer. */
+    private static String faceSignature(Context c) {
+        long[] t = today(c);
+        long now = System.currentTimeMillis();
+        int next = -1;
+        for (int i : new int[] { PrayerTimes.FAJR, PrayerTimes.DHUHR, PrayerTimes.ASR, PrayerTimes.MAGHRIB, PrayerTimes.ISHA })
+            if (t[i] > now) { next = i; break; }
+        SharedPreferences p = prefs(c);
+        return p.getString(PREF_PRAYER_PHOTO, "") + "|" + p.getBoolean(PREF_CLEAN, false) + "|"
+                + new SimpleDateFormat("yyyyMMdd", Locale.ENGLISH).format(new Date(now)) + "|" + next
+                + "|" + p.getFloat(PREF_LAT, 0f) + "," + p.getFloat(PREF_LON, 0f);
     }
 
     /** (Re)arm the alarm for the next prayer, or 00:01 when today's are done. */
@@ -144,7 +239,9 @@ public class PrayerScheduler extends BroadcastReceiver {
 
     /** Called when the watch (re)connects, so a face missed while away gets painted. */
     public static void onWatchConnected(Context c) {
-        pushFace(c);
+        refreshIfStale(c);
+        Context app = c.getApplicationContext();
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> pushFace(app), 30000);
         schedule(c);
     }
 
@@ -156,6 +253,8 @@ public class PrayerScheduler extends BroadcastReceiver {
             return;
         }
         int prayer = intent.getIntExtra(EXTRA_PRAYER, -1);
+        if (prayer < 0)
+            refreshIfStale(c);   // the just-after-midnight tick: keep the location current
         long faceDelay = 3000;
         if (prayer >= 0 && prefs(c).getBoolean(PREF_ALERTS, false)) {
             BleManager ble = BleManager.getInstance(c);

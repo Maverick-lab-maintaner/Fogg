@@ -117,6 +117,16 @@ public final class WeatherSync {
      * 4. a hardcoded fallback.
      */
     static double[] currentLocation(Context ctx) {
+        return currentLocation(ctx, true);
+    }
+
+    /** With {@code preferChosen}, a city the user picked by name wins over GPS. */
+    static double[] currentLocation(Context ctx, boolean preferChosen) {
+        android.content.SharedPreferences sp =
+                ctx.getSharedPreferences("dial_sender_prefs", Context.MODE_PRIVATE);
+        if (preferChosen && sp.getBoolean(PrayerScheduler.PREF_MANUAL, false)
+                && sp.contains("prayer_lat"))
+            return new double[] { sp.getFloat("prayer_lat", 0f), sp.getFloat("prayer_lon", 0f) };
         try {
             if (hasLocationPermission(ctx)) {
                 Location fresh = requestFreshFix(ctx);
@@ -288,6 +298,44 @@ public final class WeatherSync {
             out.add(new BleManager.WeatherDay(code, cur, hi, lo, wind, hum, vis, uv, rainMm, pop, srH, srM, srS, ssH, ssM, ssS, 0));
         }
         return out;
+    }
+
+    static String placeName(Context ctx, double lat, double lon) {
+        return resolveCity(ctx, lat, lon);
+    }
+
+    /**
+     * Open-Meteo geocoding (free, no key). Fills {lat, lon} and returns
+     * "City, Country", or null when nothing matches or the network fails.
+     */
+    static String geocode(String query, double[] out) {
+        if (query == null || query.trim().isEmpty())
+            return null;
+        try {
+            String url = "https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&format=json&name="
+                    + java.net.URLEncoder.encode(query.trim(), "UTF-8");
+            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
+            if (conn.getResponseCode() != HttpURLConnection.HTTP_OK)
+                return null;
+            StringBuilder sb = new StringBuilder();
+            try (java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                for (String line; (line = r.readLine()) != null;)
+                    sb.append(line);
+            }
+            org.json.JSONArray results = new org.json.JSONObject(sb.toString()).optJSONArray("results");
+            if (results == null || results.length() == 0)
+                return null;
+            org.json.JSONObject o = results.getJSONObject(0);
+            out[0] = o.getDouble("latitude");
+            out[1] = o.getDouble("longitude");
+            String country = o.optString("country", "");
+            return o.optString("name", query.trim()) + (country.isEmpty() ? "" : ", " + country);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static String resolveCity(Context ctx, double lat, double lon) {
