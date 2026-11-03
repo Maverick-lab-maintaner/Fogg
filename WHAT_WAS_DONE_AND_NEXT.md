@@ -679,3 +679,58 @@ element types in isolation first.
 ### 8. What Worked, What Did Not
 - Day total: the watch connected, synced, got notifications and calls, prayer and Quran reminders, faces, weather, alarms and find-watch, and was rescued from its bootloader 4×. Code is published on GitHub and Miguel has been informed.
 - Owner feedback: "all three worked", "we have done well".
+
+## Phase 9 — Silent link, Bluetooth "going off", stuck prayer location (2026-11-03, ~13:05–13:40)
+
+### 1. Chronological Timeline
+- Owner reported three problems: (1) "anytime turn on the blue on my watch it goes off again"; (2) "you hard coded the location, which affects my prayer times"; (3) "my steps has not been recored on fogg since yester".
+- Stored data: the last real steps and heart rate were from 06:31. Fogg kept "syncing" (13:06) but every sync ended "watch went quiet". A 3-minute logcat capture showed the BLE link to `…03:6A` alive all morning with **zero** replies from the watch. Fogg was also sending SMA frames (music, "reminder READ") to the H19.
+- Location: the stored prayer/weather location is a real place (checked by distance only, coordinates never printed), not a fallback. But the phone's system Location is OFF, so Fogg reused a stale fix and only refreshed on a manual tap.
+- After installing a first fix and relaunching, the log showed the real trigger: on connect, Fogg started the health sync **and** the ~82 KB auto prayer face together. The watch dropped the link about 1 s later (`Disconnected (status=8)`). The reconnect stalled at "Enabling notifications…" because `hryOtaStep` was never reset, so descriptor writes went to the face-transfer handler.
+- Second fix installed. A fresh connection gave SESSION READY, a full sync (1,142 steps today, heart rate, sleep), weather, then the face 30 s later ("done" in 12 s) with no disconnect. Committed and pushed (owner: "yes push it").
+- Owner: "it went of again now". Fogg's log showed **no** BLE drop (sync at 13:31, heart rate at 13:35). Phone Bluetooth dump: `…03:3F` is also the watch's **classic calling Bluetooth** (HFP). It was bonded on 29–31 Oct but is no longer in the bonded list (only `…03:6A` is). The watch's call Bluetooth turns itself off when it finds no paired phone. Owner was given steps to re-pair "Smartwatch" in phone Settings → Bluetooth.
+
+### 2. Technical Architecture Evolution
+- `BleManager`:
+  - `enqueueLogicalFrame` drops any non-`DF`/`FD` frame in HryFine mode (logs the first 20).
+  - New fields `lastRxMs`, `lastSilentRecoveryMs`, `smaDropLogged`.
+  - `recoverSilentHryLink()` calls `gatt.disconnect()` when a HryFine sync got no reply for ≥60 s; at most every 5 min; normal auto-reconnect follows.
+  - The disconnect handler resets `hryOtaStep`, `hryPendingPar` and reports `onTransferFailed("connection lost")`.
+  - New `isBusy()` (health sync, face transfer or file transfer active).
+- `PrayerScheduler`:
+  - `pushFace` waits while `ble.isBusy()` (retries every 15 s, up to 8 times) and skips if `faceSignature()` (photo | clean layout | date | next prayer | lat,lon) equals the last face sent. New `pushFaceNow()` forces a send.
+  - `onWatchConnected` delays the face by 30 s.
+  - Location: `PREF_MANUAL`, `PREF_PLACE`, `PREF_LOC_TIME`. `refreshLocation(c, force)` stores the place name. `chooseCity()` geocodes and sets prayer and weather coordinates. `refreshIfStale()` runs on connect and at the midnight tick when the location is over 12 h old and not chosen by hand.
+- `WeatherSync`: `currentLocation(ctx, preferChosen)` prefers a chosen city; new `placeName()` and `geocode()` (Open-Meteo geocoding API, no key).
+- `HryFacesActivity`: "Use my location" + "Choose city" buttons; the times line shows "Times for <place> (chosen | phone location)"; enabling the auto face uses `pushFaceNow`.
+
+### 3. Rejected Paths and Why
+- **"Location is hard-coded":** not the case. It was a stale last-known fix with the phone's Location off. Fixed with a city picker and auto-refresh rather than more GPS polling.
+- **Blaming setting key 22:** it is heart-rate auto-test, not Bluetooth.
+- **Treating "BT goes off" as one bug:** the first cause (face + sync collision) is fixed. The remaining one is the classic calling Bluetooth losing its phone pairing, which is a user-side pairing step, not Fogg.
+
+### 4. Current Source-of-Truth Workflow
+- Diagnose a "connected but nothing syncs" state: `adb logcat -v time BleManager:D *:S`. Look for SESSION READY, `Rx [`, "went quiet", "Disconnected (status=…)", "HryFine face:". Never print `title=`/`content=` lines (PII).
+- The watch has two addresses:
+  - `41:42:E1:F7:03:6A`: BLE (Fogg).
+  - `41:42:E1:F7:03:3F`: classic calling Bluetooth (must be paired in phone Settings) **and** the BLE bootloader address during a crash.
+
+### 5. Commit/Milestone Map
+- `8eb5c92` fix(hryfine): stop the watch dropping Bluetooth; choose prayer city — pushed to `fork/h19-hryfine-support`.
+- This docs entry.
+
+### 6. Next-Step Guidance
+1. Confirm the owner re-paired the calling Bluetooth and that it now stays on.
+2. Optional: have Fogg offer the classic pairing (`createBond` on `…03:3F`) as HryFine does, instead of a manual step.
+3. Watch for "Skipped SMA-format frame" lines. Each one is a feature still using the SMA path on HryFine and is a candidate for a HryFine implementation (reminders, music control, menstrual "GIRL_CARE").
+4. The SVG faces' missing clock; WhatsApp call alerts; remaining HryFine settings.
+
+### 7. Every Twist, Turn, and Tool Chain
+- The first relaunch looked healthy until the face fired; only reading the whole post-launch log exposed the collision and the stale `hryOtaStep`.
+- `adb logcat -c` before relaunching (`adb shell monkey -p com.example.dialsender -c android.intent.category.LAUNCHER 1`) gives a clean connection trace.
+- Health data was checked via `run-as … shared_prefs/dial_sender_prefs.xml`, parsing only the step/heart-rate/sleep series and printing distances (not coordinates) for the location; the copy was deleted afterwards.
+- `dumpsys bluetooth_manager` revealed the classic `…03:3F` bond history (HFP, `bondState 12`) that explained the remaining "Bluetooth off".
+
+### 8. What Worked, What Did Not
+- Worked: a full sync after the fix (1,142 steps, heart rate, sleep); the face sent after the sync without dropping the link; a clean build, install and push.
+- Did not (yet): the watch's calling Bluetooth still turns off until the owner re-pairs it. Owner: "it went of again now".
