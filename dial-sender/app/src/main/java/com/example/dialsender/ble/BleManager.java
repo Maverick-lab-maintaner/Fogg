@@ -4895,6 +4895,12 @@ public class BleManager {
      */
     public void sendWash(boolean enabled, int repeat, int startHour, int startMinute,
                          int endHour, int endMinute, int intervalMinutes) {
+        if (hryMode) {   // no hand-washing reminder in HryFine firmware: the phone sends them
+            PhoneReminders.saveWash(context, enabled, repeat, startHour * 60 + startMinute,
+                    endHour * 60 + endMinute, intervalMinutes);
+            log("HryFine: hand-washing reminders handled by the phone");
+            return;
+        }
         if (!isSessionReady()) return;
         byte b0 = (byte) ((enabled ? 0x80 : 0x00) | (repeat & 0x7F));
         byte[] payload = {
@@ -4926,6 +4932,12 @@ public class BleManager {
     public void sendGirlCare(boolean enabled, boolean reminderEnabled, int reminderHour, int reminderMinute,
                              int periodAdvance, int ovulationAdvance, int lastYear, int lastMonth, int lastDay,
                              int duration, int cycle) {
+        if (hryMode) {   // no period tracker in HryFine firmware: the phone sends the reminders
+            PhoneReminders.saveCare(context, enabled, reminderEnabled, reminderHour * 60 + reminderMinute,
+                    periodAdvance, ovulationAdvance, lastYear, lastMonth, lastDay, cycle);
+            log("HryFine: period reminders handled by the phone");
+            return;
+        }
         if (!isSessionReady()) return;
         byte b0 = (byte) (((reminderEnabled ? 1 : 0) << 7) | (enabled ? 1 : 0));
         int yearOffset = (lastYear >= 2000) ? (lastYear - 2000) : lastYear;
