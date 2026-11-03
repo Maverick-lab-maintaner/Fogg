@@ -955,3 +955,54 @@ Open-source starting points for the Waveshare: waveshareteam/ESP32-S3-Touch-AMOL
   2. Look at Pinterest for Islamic watch-face ideas (owner suggestion).
   3. Friday / Ramadan / Eid variants untested until those dates.
   4. Background-swap dial route paused (S1 test unstable, reverted).
+
+## Phase 13 — Background-swap test, Islamic-day wording, large Prayer Ring (2026-11-03, ~16:10–16:45)
+
+### 1. Chronological Timeline
+- Step 1 of the Phase 12 plan. Dial `0000000100030466` was inspected: hours (142,109) and minutes (100,177) at 44×58, **seconds** kind 07 (211,145), AM/PM (33,145), small stats at the top (kinds 41/40/42 at y 10/34/56) and the bottom (43/46/49/7f). A PIL mock-up of its elements over our Night Dome showed the top stats would collide with the prayer text, so the plain Night Dome plus STEPS/KCAL/BPM labels was used.
+- Built `TEST_S1_0466_nightdome.bin` (37.1 KB; records and element images byte-identical, only 02/10 and 02/11 replaced). Owner prepared (phone BT off, charger by the PC). Owner: "ready".
+- Installed from the PC: attempts 1–3 timed out at the data stage, attempt 4 OK. Owner: "night dome is there, digits clean, seconds not ticking but, waatvh keeps going on and off". The scan saw `…03:6A` once in 30 s. Reverted at once with `rescue.py rescue_dial.bin` (OK first try); `stable.py 90` → STABLE.
+- Owner: "should we abandon this all together?" → recommended pausing the dial route.
+- Owner: "do you think the signature dails are ok with level oh hierachy" → critique: the order is right, dates (8.5 px) too small. Owner: "yes make it and check from outsie for other ideaa too, more islamic symbolism".
+- Sizes changed, Arabic prayer name added. Prayer Ring first moved to the bottom half; owner: "dont move ring into the bottom have half make it large and wider and full such that everything can be seen" → one large ring (r = w/2 − 20, centre y 160), clock in its centre.
+- Preview review found ring labels clipped at the edges (MAGH…, …AJR); fixed with width-aware clamping.
+- Owner: "have you gotten and added all the islamic ideas yet" → `IslamicDay` added and applied to every Islamic face.
+- Owner: "you can even check pinterest … finish everything app within 2 mins and we would continue later". Pushed; paused.
+
+### 2. Technical Architecture Evolution
+- New `ble/IslamicDay.java`: Umm al-Qura month and day via ICU; `isRamadan`, `isEid` (1–3 Shawwal, 10–13 Dhu al-Hijjah); `name`/`arabic` (JUMU'AH الجمعة on Friday Dhuhr; SUHOOR ENDS السحور / IFTAR الإفطار in Ramadan); `heading`/`headingArabic` (EID MUBARAK عيد مبارك, RAMADAN رمضان كريم, NEXT PRAYER); `qibla(ctx)`.
+- `HryFaces`:
+  - `prayerRing`: large ring, no inner numerals, inside top NEXT + Cinzel name + time, inside bottom Arabic name (Amiri 16), dates above the ring (10.5 px), Qibla top-left, clock style {70, 112, white, 0, 0}, labels clamped to the screen.
+  - The drawn Prayer Times face, gold-bar and clean photo layouts use `IslamicDay` names.
+- `HryPremiumFaces`: Amiri loaded; label "NEXT PRAYER  المغرب" (9 px + Amiri 12.5); prayer time 16 px; dates 10.5 px brighter; Qibla top-left; `IslamicDay` headings.
+- `HryFacesActivity`: drawn-design previews saved to `cache/drawn_N.png` for review.
+- PC tooling: mock-up composer (decodes palette strips with `pypar.decode`, outlines fmt-1 images) and the background-swap builder (`dialkit.load/build`, `pypar.encode`), both in the session scratchpad.
+
+### 3. Rejected Paths and Why
+- **Background swap on real dial 0466 (S1):** the display was correct, but the watch kept restarting and the seconds were frozen. The cause is unproven (our background vs. three partial transfers before the good one). Paused on the owner's question to avoid more boot-risk on the daily watch.
+- **Ring in the bottom half:** rejected by the owner in favour of one large full ring.
+- **Seconds / live countdown in background faces:** impossible (firmware draws only HH:MM).
+
+### 4. Current Source-of-Truth Workflow
+- Preview review before every new face: open Watch faces on the phone → `adb exec-out run-as com.example.dialsender cat cache/signature_N.png` (or `drawn_N.png`) → composite the clock box (x 70–170, y 100–188; ring y 112–200) → check → only then send.
+- Dial experiments only from the PC with the rescue ready (`tools/h19-rescue`), and only if the owner explicitly restarts that line.
+
+### 5. Commit/Milestone Map
+- `1e6febc` docs: S1 result (unstable, reverted)
+- `bce6eca` feat(faces): Islamic day wording on every Islamic face; big Prayer Ring
+- `713e187` docs: phase 12 close (pushed to `fork/h19-hryfine-support` together with `db4a624`…`bce6eca`)
+- This Phase 13 entry.
+
+### 6. Next-Step Guidance
+1. Owner checks the large Prayer Ring and the Qibla placement on the watch (previews not yet confirmed after the final changes).
+2. Gather Islamic face ideas from Pinterest (owner suggestion) and add the best ones as new Signature designs.
+3. Watch the first Friday, Ramadan and Eid for the `IslamicDay` wording.
+4. Dial route: paused. If resumed, first install the **unmodified** 0466 from the PC to see whether it is stable over 5 min; that isolates our background as the cause or not.
+
+### 7. Every Twist, Turn, and Tool Chain
+- Real-dial element map (0466): type 4 kinds 05/06/07 = hours, minutes, seconds; 4e AM/PM; 40/41/42 kcal/steps/HR; 43/46/49/7f more stats; 02/10 small unit icons; 02/11 preview 138×163. Some element images use fmt 1, which `pypar.decode` doesn't read (it only reads fmt 2).
+- HryFine time block: ~100 px wide (editor caps x at 140 on 240 px), ~88 px tall.
+
+### 8. What Worked, What Did Not
+- Worked: safe reverts (rescue first try, STABLE); preview review caught the Zellige busy band and the ring label clipping before the owner saw them; Prayer Ring typography was praised: "writing on prayer ring was good and high quaity".
+- Did not: S1 background swap ("watvh keeps going on and off"); the watch's built-in digits remain the weakest visual element.
