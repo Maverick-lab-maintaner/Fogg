@@ -884,3 +884,59 @@ Open-source starting points for the Waveshare: waveshareteam/ESP32-S3-Touch-AMOL
 ### 8. What Worked, What Did Not
 - Worked, confirmed by the owner or the log: find phone, camera, music, battery, all settings acked, calling Bluetooth paired, medicine via phone message.
 - Did not: native medicine on the H19 (firmware lacks it), now handled by the phone.
+
+## Phase 12 — Signature designs, prayer info, and the "background swap" dial plan (2026-11-03, ~15:10–16:10)
+
+### 1. Chronological Timeline
+- Owner asked for premium faces. `HryPremiumFaces` was built: Mihrab Arch, Night Dome, Zellige, Minimal Dark, Aurora, drawn in code around the centred watch clock. Previews were pulled from the app cache via `adb exec-out run-as … cat cache/signature_N.png` and reviewed **before** sending. Zellige was fixed so the pattern clears behind the time.
+- The first send failed: "could not switch the watch's transfer channel" (CCCD write refused while GATT was busy). The watch was left waiting, so later attempts timed out. Fixed with a CCCD retry (×6, 300 ms) and a link reset after a failed face. Mihrab Arch and Night Dome then sent cleanly (~13 s each).
+- Owner: "add seconds and next prayer time with countdown hijri and normal date". Done: next prayer plus Gregorian and Hijri dates baked in and repainted after each prayer and at midnight (signature designs become the auto prayer face, `PREF_PRAYER_PHOTO = "@sig:N"`). Not possible in this mode: seconds and a live countdown (the watch only animates its own HH:MM; a picture can't tick).
+- Owner: "writing on prayer ring was good and high quality … the main time at left middle looks terrible". Info block redone in Prayer Ring typography (spaced label, large gold Cinzel name, bold white time, small dates). Watch clock centred at **x 70** (HryFine caps time x at 140 on 240 px, so the block is ~100 px wide) and switched to white.
+- Owner: "why does the prayer time looks better than the time at the center". Explained: the info is phone-rendered pixels; the clock is the firmware's built-in bitmap font. Position and colour are the only levers.
+- Owner suggested Device → Dials should open the faces screen directly. Done, with a "+ New" button in the heading.
+- Owner: "research this deeply online … something just enough". Findings below; owner: "let document this and start step by step".
+
+### 2. Technical Architecture Evolution
+- New `ble/HryPremiumFaces.java` (5 designs, info block, Cinzel). `PrayerScheduler.SIG`. `HrySvgFaces` clock centred (x 70).
+- `BleManager`: `writeCccd(c, enable, attempt)` retries; `hryWatchAwaitingFace` → link reset in `completeHryOta()` after a failure or timeout. `FACE_WIDGETS` + `PREF_FACE_ABOVE/BELOW` override the style above/below widgets for every face ("Time display" panel).
+- `DeviceFragment`: Dials → `HryFacesActivity` on HryFine. `HryFacesActivity` heading row has "+ New" → `DialEditorActivity`.
+
+### 3. Rejected Paths and Why
+- Drawing the time into the picture and hiding the watch clock: a picture is frozen, and keeping it right would mean a ~70 KB transfer every minute.
+- Live countdown or seconds in background mode: not supported by the firmware.
+- Self-compiled WF dials with **our own** element records: still parked (4 boot-loops, H12 unresolved).
+- Community tools: fbiego/watch-face-wearfit (MIT) targets Wearfit/Chronos watches and warns of reboot loops; milcorix/wearfit-pro-ble (MIT) is Bluetrum but its dial packer is unreleased. The Bluetrum BT8918C 表盘设计工具 (official) builds firmware resources (palette565/RLE) and is not public.
+
+### 4. Current Source-of-Truth Workflow — "background swap" (to be tested)
+- Take a **real HryFine store dial** and keep **all** its records and digit or hand images. Replace only the background (02/10) and preview (02/11) with our art (palette PAR via `pypar.encode`). Same method as Test B2 (stable, Phase 3/4).
+- Size budget ~52 KB total (53.0 KB accepted, 54.6 KB refused). Measured with our encoder:
+
+| Our background | Size | Fits |
+|---|---|---|
+| Night Dome | ~9 KB | any dial |
+| Minimal Dark | ~8 KB | any |
+| Aurora (64 colours) | ~15 KB | any |
+| Mihrab Arch | ~32 KB | only after slimming |
+| Zellige | ~37–46 KB | no |
+
+| Real dial | Total | Room for background | Digits |
+|---|---|---|---|
+| 0000000100030466 (arcs) | 43.4 KB | ~17 KB | digital |
+| 00000101000007EF | 30.1 KB | ~30 KB | analog hands |
+| 00000001000002CF | 51.8 KB | ~18 KB | digital |
+
+- Prayer info stays current only by reinstalling the dial after each prayer (make it optional).
+- **Test protocol:** build on the PC → mock-up check of element positions over our art → install from the PC with `tools/h19-rescue/rescue.py <dial> --no-reboot` (watch on charger, phone BT off) → owner checks the display → `stable.py 300` must stay STABLE. Only then bring it into Fogg.
+
+### 5. Commit/Milestone Map
+- `db4a624` signature designs + time display · `9bbe445` CCCD retry + link reset · `0cac8b3` prayer-aware signature designs, centred clock · `cf65ddc` Minimal accent bar · `b0f3a1e` Dials opens the faces screen (all local; not yet pushed).
+
+### 6. Next-Step Guidance
+1. Step 1: Night Dome into dial 0466 (digital). Step 2: analog dial 07EF. Step 3: a Fogg feature ("Live designs") with an optional re-install after each prayer.
+
+### 7. Every Twist, Turn, and Tool Chain
+- Preview review loop: the app writes `cache/signature_N.png`; pull with `run-as`, composite with the red clock box (x 70–170, y 100–188) in PIL, review before the owner sends.
+
+### 8. What Worked, What Did Not
+- Worked: signature designs sent cleanly after the CCCD fix; owner liked the Prayer Ring typography.
+- Did not: the watch's built-in digits look crude next to phone-rendered text. That is the motivation for the background-swap test.
