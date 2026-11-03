@@ -129,10 +129,10 @@ public final class HryFaces {
             c.drawText(hm.format(new Date(times[r])), 22, base, time);
             Paint en = font(cinzel, 8.5f, isNext ? GOLD : past ? 0xFF4F6660 : 0xFF9DB3AA, false);
             en.setLetterSpacing(0.1f);
-            c.drawText(PrayerTimes.NAMES[r].toUpperCase(Locale.ENGLISH), 80, base - 1, en);
+            c.drawText(IslamicDay.name(r, now), 80, base - 1, en);
             Paint ar = font(isNext ? amiriBold : amiri, 16, isNext ? 0xFFF6E3A1 : past ? 0xFF4F6660 : GOLD, false);
             ar.setTextAlign(Paint.Align.RIGHT);
-            c.drawText(ARABIC[r], w - 22, base + 1, ar);
+            c.drawText(IslamicDay.arabic(r, now), w - 22, base + 1, ar);
         }
         return new Face(b, clock(GOLD, 0));
     }
@@ -394,7 +394,7 @@ public final class HryFaces {
         head.setShader(foil(40, 0, w - 40, 0));
         head.setTextAlign(Paint.Align.CENTER);
         head.setLetterSpacing(0.08f);
-        String nextText = next >= 0 ? "NEXT  ·  " + PrayerTimes.NAMES[next].toUpperCase(Locale.ENGLISH)
+        String nextText = next >= 0 ? (IslamicDay.isEid(now) ? "EID MUBARAK  ·  " : "NEXT  ·  ") + IslamicDay.name(next, now)
                 + "  " + hm.format(new Date(times[next])) : "ISHA PRAYED  ·  GOOD NIGHT";
         c.drawText(nextText, w / 2f, bar.top + 18, head);
 
@@ -411,7 +411,7 @@ public final class HryFaces {
             int col = isNext ? 0xFFF6E3A1 : past ? 0xFF7C8580 : 0xFFF2F2EE;
             Paint ar = font(isNext ? amiriBold : amiri, 13, col, false);
             ar.setTextAlign(Paint.Align.CENTER);
-            c.drawText(ARABIC[r], cx, bar.top + 45, ar);
+            c.drawText(IslamicDay.arabic(r, now), cx, bar.top + 45, ar);
             Paint t = font(cinzel, 9.5f, col, isNext);
             t.setTextAlign(Paint.Align.CENTER);
             c.drawText(hm.format(new Date(times[r])), cx, bar.top + 63, t);
@@ -434,8 +434,8 @@ public final class HryFaces {
         radialBg(c, w, h, w * 0.5f, h * 0.62f, 0xFF10263A, 0xFF03080F);
         starPattern(c, w, h, 0x0EE3C267, 30);
 
-        float cx = w / 2f, cy = CLOCK_BAND + (h - CLOCK_BAND) / 2f + 2;
-        float r = Math.min(w / 2f - 22, (h - CLOCK_BAND) / 2f - 16);
+        // One large ring across the screen; the watch clock sits in its centre (x 70, y 112).
+        float r = w / 2f - 20, cx = w / 2f, cy = 160;
         RectF oval = new RectF(cx - r, cy - r, cx + r, cy + r);
         Calendar day = Calendar.getInstance();
         day.setTimeInMillis(now);
@@ -469,10 +469,7 @@ public final class HryFaces {
             tick.setStrokeWidth(hr % 6 == 0 ? 1.6f : 1f);
             c.drawLine(cx + (float) Math.cos(a) * in, cy + (float) Math.sin(a) * in,
                     cx + (float) Math.cos(a) * out, cy + (float) Math.sin(a) * out, tick);
-            if (hr % 6 == 0) {
-                float tr = r - 28;
-                c.drawText(String.valueOf(hr), cx + (float) Math.cos(a) * tr, cy + (float) Math.sin(a) * tr + 3, hourTxt);
-            }
+            // (no inner numerals: the centre carries the next prayer)
         }
 
         int[] rows = { PrayerTimes.FAJR, PrayerTimes.DHUHR, PrayerTimes.ASR, PrayerTimes.MAGHRIB, PrayerTimes.ISHA };
@@ -494,24 +491,54 @@ public final class HryFaces {
             Paint name = font(Typeface.DEFAULT_BOLD, 8.5f, isNext ? 0xFFF6E3A1 : 0xDDFFFFFF, false);
             name.setTextAlign(Math.cos(a) > 0.3 ? Paint.Align.LEFT : Math.cos(a) < -0.3 ? Paint.Align.RIGHT : Paint.Align.CENTER);
             name.setShadowLayer(2, 0, 1, 0xFF000000);
-            float nx = Math.max(2, Math.min(w - 2, lx - (float) Math.cos(a) * 8));
-            c.drawText(PrayerTimes.NAMES[p].toUpperCase(Locale.ENGLISH), nx, ly + 3, name);
+            String label = IslamicDay.name(p, now);
+            float tw = name.measureText(label);
+            float nx = lx - (float) Math.cos(a) * 8;
+            if (name.getTextAlign() == Paint.Align.LEFT)
+                nx = Math.min(nx, w - 3 - tw);
+            else if (name.getTextAlign() == Paint.Align.RIGHT)
+                nx = Math.max(nx, 3 + tw);
+            else
+                nx = Math.max(3 + tw / 2, Math.min(w - 3 - tw / 2, nx));
+            c.drawText(label, nx, ly + 3, name);
         }
 
+        // Centre of the ring: NEXT / name (gold Cinzel) / time / Arabic name (Amiri).
         Paint lab = font(Typeface.DEFAULT_BOLD, 8.5f, 0xFF8FA3BF, false);
         lab.setTextAlign(Paint.Align.CENTER);
         lab.setLetterSpacing(0.15f);
-        c.drawText(next >= 0 ? "NEXT" : "TONIGHT", cx, cy - 16, lab);
-        Paint big = font(cinzel, 17, 0, true);
-        big.setShader(foil(cx - 50, 0, cx + 50, 0));
-        big.setTextAlign(Paint.Align.CENTER);
-        c.drawText(next >= 0 ? PrayerTimes.NAMES[next].toUpperCase(Locale.ENGLISH) : "ALL PRAYED", cx, cy + 3, big);
+        // Inside the ring, above the clock: NEXT, then the name (gold Cinzel) and its time.
+        c.drawText(IslamicDay.isEid(now) ? "EID MUBARAK" : IslamicDay.isRamadan(now) ? "RAMADAN" : next >= 0 ? "NEXT" : "TONIGHT",
+                cx, 80, lab);
+        Paint big = font(cinzel, 15, 0, true);
+        big.setShader(foil(cx - 55, 0, cx + 55, 0));
         Paint t = font(Typeface.DEFAULT_BOLD, 13, 0xFFFFFFFF, false);
-        t.setTextAlign(Paint.Align.CENTER);
-        if (next >= 0)
-            c.drawText(hm.format(new Date(times[next])), cx, cy + 20, t);
-        c.drawText(hijriShort(), cx, cy + 34, lab);
-        return new Face(b, clock(0xFFFFFFFF, 1));
+        String nm = next >= 0 ? IslamicDay.name(next, now) : "ALL PRAYED";
+        String tm = next >= 0 ? hm.format(new Date(times[next])) : "";
+        float gap = tm.isEmpty() ? 0 : 7, wn = big.measureText(nm), wt = tm.isEmpty() ? 0 : t.measureText(tm);
+        float sx = cx - (wn + gap + wt) / 2f;
+        c.drawText(nm, sx, 100, big);
+        if (!tm.isEmpty())
+            c.drawText(tm, sx + wn + gap, 100, t);
+        // Inside the ring, below the clock: the Arabic name.
+        if (next >= 0) {
+            Paint ar = font(amiri, 16, 0xFFE9C46A, false);
+            ar.setTextAlign(Paint.Align.CENTER);
+            c.drawText(IslamicDay.isEid(now) ? "عيد مبارك" : IslamicDay.arabic(next, now), cx, 222, ar);
+        }
+
+        // Under the clock: Gregorian · Hijri, readable size.
+        Paint dates = font(Typeface.DEFAULT_BOLD, 10.5f, 0xFFDDE5EE, false);
+        dates.setTextAlign(Paint.Align.CENTER);
+        dates.setLetterSpacing(0.04f);
+        String greg = new SimpleDateFormat("EEE d MMM", Locale.ENGLISH).format(new Date(now)).toUpperCase(Locale.ENGLISH);
+        c.drawText(greg + "  ·  " + hijriShort(), cx, 34, dates);
+
+        // Qibla, fixed for the location, top-left corner.
+        Paint q = font(Typeface.DEFAULT_BOLD, 8.5f, 0xFF8FA3BF, false);
+        q.setLetterSpacing(0.12f);
+        c.drawText(IslamicDay.qibla(ctx), 10, 16, q);
+        return new Face(b, new int[] { 70, 112, rgb565(0xFFFFFFFF), 0, 0 });
     }
 
     /**
@@ -563,7 +590,7 @@ public final class HryFaces {
         c.drawText(next >= 0 ? "NEXT" : "TONIGHT", lx, panel.top + 20, lab);
         Paint name = font(Typeface.DEFAULT_BOLD, 17, ink, false);
         name.setTextAlign(Paint.Align.CENTER);
-        c.drawText(next >= 0 ? PrayerTimes.NAMES[next].toUpperCase(Locale.ENGLISH) : "ALL PRAYED", lx, panel.top + 42, name);
+        c.drawText(next >= 0 ? IslamicDay.name(next, now) : "ALL PRAYED", lx, panel.top + 42, name);
         c.drawText("TIME", rx, panel.top + 20, lab);
         Paint big = font(Typeface.DEFAULT_BOLD, 20, ink, false);
         big.setTextAlign(Paint.Align.CENTER);

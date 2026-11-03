@@ -213,6 +213,11 @@ public class HryFacesActivity extends AppCompatActivity {
             }
             final int index = i;
             Bitmap preview = i == PHOTO ? null : render(i, wh[0], wh[1]).image;
+            if (preview != null)
+                try (java.io.FileOutputStream o = new java.io.FileOutputStream(new java.io.File(getCacheDir(), "drawn_" + i + ".png"))) {
+                    preview.compress(Bitmap.CompressFormat.PNG, 100, o);
+                } catch (java.io.IOException ignored) {
+                }
             row.addView(card(i == PHOTO ? "Your photo" : HryFaces.NAMES[i], preview, v -> onFaceTapped(index)));
         }
         if (count % 2 == 1)

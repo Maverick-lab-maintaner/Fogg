@@ -57,12 +57,22 @@ public final class HryPremiumFaces {
             case 3: clock = minimal(c, w, h, info); break;
             default: clock = aurora(c, w, h); break;
         }
-        if (info)
+        if (info) {
             info(c, w, times, now, infoOnTop(index), clock, index == 3 ? 206 : 200);
+            if (ctx != null) {   // Qibla, fixed for the location, in the top-left corner
+                Paint q = new Paint(Paint.ANTI_ALIAS_FLAG);
+                q.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+                q.setTextSize(8.5f);
+                q.setLetterSpacing(0.12f);
+                q.setColor(0xFF8FA3BF);
+                c.drawText(IslamicDay.qibla(ctx), index == 2 ? 26 : 14, index == 2 ? 26 : 18, q);
+            }
+        }
         return new HryFaces.Face(b, new int[] { TIME_X, TIME_Y, HryFaces.rgb565(clock), 0, 0 });
     }
 
-    private static android.graphics.Typeface cinzel;
+    private static android.graphics.Typeface cinzel, amiri;
+    private static final String[] ARABIC = { "الفجر", "الشروق", "الظهر", "العصر", "المغرب", "العشاء" };
 
     /** Cinzel (SIL OFL), the face used on the Prayer Ring; falls back to serif. */
     static void fonts(android.content.Context ctx) {
@@ -70,8 +80,10 @@ public final class HryPremiumFaces {
             return;
         try {
             cinzel = android.graphics.Typeface.createFromAsset(ctx.getAssets(), "fonts/hry/Cinzel.ttf");
+            amiri = android.graphics.Typeface.createFromAsset(ctx.getAssets(), "fonts/hry/Amiri-Bold.ttf");
         } catch (RuntimeException e) {
             cinzel = android.graphics.Typeface.SERIF;
+            amiri = android.graphics.Typeface.SERIF;
         }
     }
 
@@ -87,7 +99,7 @@ public final class HryPremiumFaces {
         for (int r : rows)
             if (t[r] > now) { next = r; break; }
         java.text.SimpleDateFormat hm = new java.text.SimpleDateFormat("HH:mm", java.util.Locale.ENGLISH);
-        String name = next >= 0 ? PrayerTimes.NAMES[next].toUpperCase(java.util.Locale.ENGLISH) : "ISHA PRAYED";
+        String name = next >= 0 ? IslamicDay.name(next, now) : "ISHA PRAYED";
         String time = next >= 0 ? hm.format(new java.util.Date(t[next])) : "";
         String greg = new java.text.SimpleDateFormat("EEE d MMM", java.util.Locale.ENGLISH).format(new java.util.Date(now));
         String hij = hijri(now);
@@ -96,11 +108,22 @@ public final class HryPremiumFaces {
         float y0 = top ? 42 : belowY;          // label baseline
         Paint lab = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
         lab.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        lab.setTextSize(8.5f);
+        lab.setTextSize(9f);
         lab.setLetterSpacing(0.18f);
         lab.setColor(0xFF8FA3BF);
-        lab.setTextAlign(Paint.Align.CENTER);
-        c.drawText(next >= 0 ? "NEXT PRAYER" : "TONIGHT", w / 2f, y0, lab);
+        // "NEXT PRAYER · المغرب": the Arabic name in Amiri, soft gold
+        String en = next >= 0 ? IslamicDay.heading(now) + "   " : "TONIGHT";
+        Paint ar = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
+        ar.setTypeface(amiri != null ? amiri : android.graphics.Typeface.SERIF);
+        ar.setTextSize(12.5f);
+        ar.setColor(0xFFE9C46A);
+        String arName = IslamicDay.isEid(now) || IslamicDay.isRamadan(now) ? IslamicDay.headingArabic(now)
+                : next >= 0 ? IslamicDay.arabic(next, now) : "";
+        float wEn = lab.measureText(en), wAr = arName.isEmpty() ? 0 : ar.measureText(arName);
+        float lx = w / 2f - (wEn + wAr) / 2f;
+        c.drawText(en, lx, y0, lab);
+        if (!arName.isEmpty())
+            c.drawText(arName, lx + wEn, y0 + 1, ar);
 
         Paint big = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
         big.setTypeface(cinzel != null ? android.graphics.Typeface.create(cinzel, android.graphics.Typeface.BOLD)
@@ -110,7 +133,7 @@ public final class HryPremiumFaces {
         big.setShadowLayer(3, 0, 1, 0xB0000000);
         Paint tp = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG);
         tp.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        tp.setTextSize(15);
+        tp.setTextSize(16);
         tp.setColor(0xFFFFFFFF);
         tp.setShadowLayer(3, 0, 1, 0xB0000000);
         float gap = time.isEmpty() ? 0 : 9;
@@ -121,10 +144,11 @@ public final class HryPremiumFaces {
             c.drawText(time, x + wn + gap, y1, tp);
 
         Paint dp = new Paint(lab);
-        dp.setTextSize(8.5f);
-        dp.setLetterSpacing(0.10f);
-        dp.setColor(0xFFC9D3E0);
-        c.drawText(dates, w / 2f, y1 + 17, dp);
+        dp.setTextAlign(Paint.Align.CENTER);
+        dp.setTextSize(10.5f);
+        dp.setLetterSpacing(0.04f);
+        dp.setColor(0xFFDDE5EE);
+        c.drawText(dates, w / 2f, y1 + 19, dp);
     }
 
     private static String hijri(long now) {
