@@ -181,6 +181,7 @@
         </activity>
 
         <receiver android:name=".ble.PrayerScheduler" android:exported="false"/>
+        <receiver android:name=".ble.MedicineReminders" android:exported="false"/>
 
         <activity android:name=".ImportDataActivity" android:exported="false"/>
         <activity android:name=".ExportDataActivity" android:exported="false"/>

@@ -1057,7 +1057,12 @@ public class BleManager {
                 boolean valid = value.length > 15 && value[0] == (byte) 0xAA;
                 boolean sdk = valid && (value[15] & 0x10) != 0;
                 boolean devInfo = valid && (value[15] & 0x20) != 0;
-                log("HryFine features: sdk=" + sdk + " deviceInfo=" + devInfo);
+                // Feature bits as HryFine reads them (byte 15): 0x08 medicine, 0x04 drink water,
+                // 0x80 clear = raise-to-wake supported.
+                hryMedicineNative = valid && (value[15] & 0x08) != 0;
+                prefs.edit().putBoolean("hry_medicine_native", hryMedicineNative).apply();
+                log("HryFine features: sdk=" + sdk + " deviceInfo=" + devInfo
+                        + " medicine=" + hryMedicineNative + " drink=" + (valid && (value[15] & 0x04) != 0));
                 startHryLink(sdk, devInfo);
             }
         }
@@ -1884,6 +1889,13 @@ public class BleManager {
 
     public static final String HRW = "hrw_";
 
+    private boolean hryMedicineNative;
+
+    /** True when the watch firmware has its own medicine reminders (feature bit 0x08). */
+    public boolean isHryMedicineNative() {
+        return hryMedicineNative || prefs.getBoolean("hry_medicine_native", false);
+    }
+
     /** Send every stored HryFine watch setting; called on connect and after edits. */
     public void pushHryWatchSettings() {
         if (!hryMode || !isSessionReady())
@@ -1905,13 +1917,16 @@ public class BleManager {
                 p.getInt(HRW + "drink_start", 9), p.getInt(HRW + "drink_end", 21), 127));
         java.util.List<int[]> meds = new java.util.ArrayList<>();
         Calendar today = Calendar.getInstance();
-        for (int i = 0; i < 3; i++)
+        // Without the native feature the phone sends the reminders (MedicineReminders).
+        for (int i = 0; i < 3 && isHryMedicineNative(); i++)
             if (p.getBoolean(HRW + "med" + i + "_on", false)) {
                 int m = p.getInt(HRW + "med" + i + "_time", 8 * 60 + i * 6 * 60);
                 meds.add(new int[] { today.get(Calendar.YEAR), today.get(Calendar.MONTH) + 1,
                         today.get(Calendar.DAY_OF_MONTH), m / 60, m % 60, i, 127 });
             }
-        f.add(HryFineProtocol.medicines(meds));
+        if (isHryMedicineNative())
+            f.add(HryFineProtocol.medicines(meds));
+        MedicineReminders.schedule(context);
         log("Tx HryFine watch settings: " + f.size() + " frames (raise=" + raise + " dnd=" + dnd + " meds=" + meds.size() + ")");
         for (int i = 0; i < f.size(); i++) {
             byte[] frame = f.get(i);

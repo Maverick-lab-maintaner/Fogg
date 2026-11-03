@@ -19,6 +19,7 @@ public class BootReceiver extends BroadcastReceiver {
             return;
         }
         PrayerScheduler.schedule(context.getApplicationContext());
+        MedicineReminders.schedule(context.getApplicationContext());
         BleManager ble = BleManager.getInstance(context);
         if (ble.getVerifiedDeviceAddress() == null || !ble.isAutoConnectEnabled())
             return;

@@ -350,6 +350,7 @@ final class HryFineProtocol {
                 // Fogg's own prayer alerts and Quran verses: the H19 acks type 13 ("other")
                 // but does not display it, so they go out as SMS-type messages.
                 { "com.example.dialsender.prayer", "1" }, { "com.example.dialsender.quran", "1" },
+                { "com.example.dialsender.medicine", "1" },
                 { "com.samsung.android.messaging", "1" }, { "com.tencent.mobileqq", "2" },
                 { "com.tencent.mm", "3" }, { "com.facebook.katana", "4" }, { "com.twitter.android", "5" },
                 { "com.skype.raider", "6" }, { "jp.naver.line.android", "7" }, { "com.whatsapp", "8" },

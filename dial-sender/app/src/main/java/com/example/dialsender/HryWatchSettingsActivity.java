@@ -88,7 +88,8 @@ public class HryWatchSettingsActivity extends AppCompatActivity {
         drink.addView(minutes("Every", "drink_every", 120, new int[] { 30, 60, 90, 120, 180 }));
         drink.addView(hourRow("From", "drink_start", 9, "To", "drink_end", 21));
 
-        LinearLayout med = panel("Medicine", "Up to three reminders a day");
+        LinearLayout med = panel("Medicine", ble.isHryMedicineNative() ? "Up to three reminders a day"
+                : "Up to three a day — sent from your phone (this watch has no built-in medicine reminder)");
         for (int i = 0; i < 3; i++) {
             med.addView(toggle("Reminder " + (i + 1), "med" + i + "_on", false));
             med.addView(timeRow("At", "med" + i + "_time", 8 * 60 + i * 6 * 60, null, null, 0));
@@ -106,6 +107,7 @@ public class HryWatchSettingsActivity extends AppCompatActivity {
     // ------------------------------------------------------------- push
 
     private void changed() {
+        com.example.dialsender.ble.MedicineReminders.schedule(this);
         if (ble.isSessionReady()) {
             ble.pushHryWatchSettings();
         } else {
