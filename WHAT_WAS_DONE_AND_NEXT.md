@@ -947,3 +947,11 @@ Open-source starting points for the Waveshare: waveshareteam/ESP32-S3-Touch-AMOL
 - Owner: "night dome is there, digits clean, seconds not ticking but, waatvh keeps going on and off". The scan saw `…03:6A` only once in 30 s, which suggests repeated restarts (no bootloader).
 - Reverted immediately with `rescue.py rescue_dial.bin` (installed first try); `stable.py 90` then showed STABLE (03:6A from 8 s to 70 s).
 - Unresolved: our background vs the three partial transfers. Test not repeated; owner asked whether to abandon the dial route.
+
+### Phase 12 close (2026-11-03, ~16:40)
+- Done: IslamicDay (Jumu'ah / Suhoor / Iftar / Eid / Arabic names / Qibla) on all Islamic faces; large full-screen Prayer Ring with labels kept on screen; signature info sizes (dates 10.5 px, label 9 px + Arabic name, time 16 px). Commit `bce6eca`.
+- Paused by the owner ("finish everything … we would continue later"):
+  1. Owner preview check of the large Prayer Ring and Qibla placement (not yet confirmed on the watch).
+  2. Look at Pinterest for Islamic watch-face ideas (owner suggestion).
+  3. Friday / Ramadan / Eid variants untested until those dates.
+  4. Background-swap dial route paused (S1 test unstable, reverted).
