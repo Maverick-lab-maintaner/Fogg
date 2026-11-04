@@ -70,17 +70,28 @@ public final class HrySvgFaces {
 
     /** Null if the SVG cannot be read. */
     public static HryFaces.Face render(Context ctx, int index, int w, int h) {
+        return render(ctx, index, w, h, null, 0);
+    }
+
+    /** Blue and brown designs keep the soft band behind the clock; the others leave it clear. */
+    private static boolean keepsBand(Bg bg) {
+        return bg == Bg.NAVY || bg == Bg.MIDNIGHT || bg == Bg.NIGHT || bg == Bg.BLACK || bg == Bg.BURGUNDY;
+    }
+
+    /** With {@code times}, the face carries the next prayer, dates and Qibla above the clock. */
+    public static HryFaces.Face render(Context ctx, int index, int w, int h, long[] times, long now) {
         Design d = DESIGNS[index];
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
         background(c, w, h, d.bg);
 
+        boolean info = times != null, band = keepsBand(d.bg);
         float bandTop = TIME_Y - 10, bandBottom = TIME_Y + TIME_H + 6;
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         boolean centredMotif = !d.fill && !d.bottom && !d.file.startsWith("bismillah_wide") && !d.file.startsWith("bismillah_arch");
 
         if (d.fill || centredMotif) {
-            // Pattern or single motif: large and faint behind everything, so the clock stays readable.
+            // Pattern or single motif: large and faint behind everything.
             RectF area = d.fill ? new RectF(0, 0, w, h)
                     : new RectF(w / 2f - (h * 0.46f), h / 2f - (h * 0.46f), w / 2f + (h * 0.46f), h / 2f + (h * 0.46f));
             Bitmap mask = inkMask(ctx, d.file, Math.round(area.width()), Math.round(area.height()),
@@ -89,7 +100,21 @@ public final class HrySvgFaces {
                 return null;
             ink(p, d, area);
             p.setAlpha(d.fill ? 120 : 95);
-            c.drawBitmap(mask, area.left, area.top, p);
+            Bitmap layer = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            Canvas lc = new Canvas(layer);
+            lc.drawBitmap(mask, area.left, area.top, p);
+            if (!band) {
+                // No band here: clear the art itself behind the text and the clock.
+                float top = info ? 26 : bandTop - 16;
+                Paint clear = new Paint(Paint.ANTI_ALIAS_FLAG);
+                clear.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT));
+                clear.setShader(new LinearGradient(0, top, 0, bandBottom + 16,
+                        new int[] { 0x00000000, 0xFF000000, 0xFF000000, 0x00000000 }, new float[] { 0f, 0.12f, 0.88f, 1f },
+                        Shader.TileMode.CLAMP));
+                lc.drawRect(0, top, w, bandBottom + 16, clear);
+            }
+            c.drawBitmap(layer, 0, 0, null);
+            layer.recycle();
         } else {
             // Calligraphy banner or silhouette: along the bottom, under the clock.
             RectF area = d.bottom ? new RectF(0, bandBottom + 4, w, h)
@@ -102,20 +127,23 @@ public final class HrySvgFaces {
             c.drawBitmap(mask, area.left, area.top, p);
         }
 
-        // Soft glass band behind the clock and a small crescent above it.
-        Paint glass = new Paint(Paint.ANTI_ALIAS_FLAG);
-        glass.setShader(new LinearGradient(0, bandTop, 0, bandBottom,
-                new int[] { 0x00000000, 0x8C000000, 0x8C000000, 0x00000000 }, new float[] { 0f, 0.18f, 0.82f, 1f },
-                Shader.TileMode.CLAMP));
-        c.drawRect(0, bandTop, w, bandBottom, glass);
-        Paint rule = new Paint(Paint.ANTI_ALIAS_FLAG);
-        rule.setShader(HryFaces.foil(w * 0.25f, 0, w * 0.75f, 0));
-        c.drawRect(w * 0.28f, bandTop + 2, w * 0.72f, bandTop + 3.2f, rule);
-        c.drawRect(w * 0.28f, bandBottom - 3.2f, w * 0.72f, bandBottom - 2, rule);
-        HryFaces.crescent(c, w / 2f, bandTop - 26, 11, HryFaces.foil(w / 2f - 14, bandTop - 40, w / 2f + 14, bandTop - 12));
+        if (band) {
+            Paint glass = new Paint(Paint.ANTI_ALIAS_FLAG);
+            glass.setShader(new LinearGradient(0, bandTop, 0, bandBottom,
+                    new int[] { 0x00000000, 0x8C000000, 0x8C000000, 0x00000000 }, new float[] { 0f, 0.18f, 0.82f, 1f },
+                    Shader.TileMode.CLAMP));
+            c.drawRect(0, bandTop, w, bandBottom, glass);
+            Paint rule = new Paint(Paint.ANTI_ALIAS_FLAG);
+            rule.setShader(HryFaces.foil(w * 0.25f, 0, w * 0.75f, 0));
+            c.drawRect(w * 0.28f, bandTop + 2, w * 0.72f, bandTop + 3.2f, rule);
+            c.drawRect(w * 0.28f, bandBottom - 3.2f, w * 0.72f, bandBottom - 2, rule);
+        }
+        if (info)
+            HryPremiumFaces.overlayTop(ctx, c, w, times, now);
+        else
+            HryFaces.crescent(c, w / 2f, bandTop - 26, 11, HryFaces.foil(w / 2f - 14, bandTop - 40, w / 2f + 14, bandTop - 12));
 
-        int clock = d.bg == Bg.SUNSET ? 0xFFFFF4E0 : 0xFFF6E3A1;
-        return new HryFaces.Face(b, new int[] { TIME_X, TIME_Y, HryFaces.rgb565(clock), 0, 0 });
+        return new HryFaces.Face(b, new int[] { TIME_X, TIME_Y, HryFaces.rgb565(0xFFFFFFFF), 0, 0 });
     }
 
     private static void ink(Paint p, Design d, RectF area) {
@@ -174,8 +202,8 @@ public final class HrySvgFaces {
             case PURPLE: HryFaces.radialBg(c, w, h, w * .5f, h * .6f, 0xFF43205E, 0xFF0C0514); break;
             case SUNSET: {
                 Paint p = new Paint();
-                p.setShader(new LinearGradient(0, 0, 0, h, new int[] { 0xFFF6C27A, 0xFFF08A4B, 0xFFB8454A, 0xFF4A1E3A },
-                        new float[] { 0f, .45f, .75f, 1f }, Shader.TileMode.CLAMP));
+                p.setShader(new LinearGradient(0, 0, 0, h, new int[] { 0xFF2A1740, 0xFF7A2F55, 0xFFD9683F, 0xFFF2A65A },
+                        new float[] { 0f, .35f, .7f, 1f }, Shader.TileMode.CLAMP));
                 c.drawRect(0, 0, w, h, p);
                 Paint sun = new Paint(Paint.ANTI_ALIAS_FLAG);
                 sun.setColor(0xFFFFE2A8);

@@ -276,7 +276,7 @@ public class HryFacesActivity extends AppCompatActivity {
         td.addView(note("Takes effect the next time you send a face."));
 
         // ---- Vector designs
-        LinearLayout vp = panel("Vector designs", "Calligraphy, patterns and silhouettes drawn at the watch's exact size");
+        LinearLayout vp = panel("Vector designs", "Calligraphy and patterns with the next prayer, dates and Qibla — kept up to date");
         LinearLayout vrow = null;
         for (int i = 0; i < com.example.dialsender.ble.HrySvgFaces.count(); i++) {
             if (i % 2 == 0) {
@@ -288,7 +288,14 @@ public class HryFacesActivity extends AppCompatActivity {
             vrow.addView(card);
             ImageView vimg = (ImageView) ((LinearLayout) card).getChildAt(0);
             previews.execute(() -> {
-                HryFaces.Face f = com.example.dialsender.ble.HrySvgFaces.render(this, vi, wh[0], wh[1]);
+                HryFaces.Face f = com.example.dialsender.ble.HrySvgFaces.render(this, vi, wh[0], wh[1], times, now);
+                if (f != null) {
+                    try (java.io.FileOutputStream o = new java.io.FileOutputStream(
+                            new java.io.File(getCacheDir(), "vector_" + vi + ".png"))) {
+                        f.image.compress(Bitmap.CompressFormat.PNG, 100, o);
+                    } catch (java.io.IOException ignored) {
+                    }
+                }
                 if (f != null)
                     runOnUiThread(() -> {
                         vimg.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -352,12 +359,16 @@ public class HryFacesActivity extends AppCompatActivity {
         }
         int[] wh = ble.getHryScreenSize();
         previews.execute(() -> {
-            HryFaces.Face f = com.example.dialsender.ble.HrySvgFaces.render(this, index, wh[0], wh[1]);
+            HryFaces.Face f = com.example.dialsender.ble.HrySvgFaces.render(this, index, wh[0], wh[1],
+                    PrayerScheduler.today(this), System.currentTimeMillis());
             runOnUiThread(() -> {
                 if (f == null)
                     Toast.makeText(this, "Could not draw this design", Toast.LENGTH_SHORT).show();
-                else
-                    send(f, false);
+                else {
+                    // Becomes the auto-updating prayer face, like the signature designs.
+                    prefs.edit().putString(PrayerScheduler.PREF_PRAYER_PHOTO, PrayerScheduler.VEC + index).apply();
+                    send(f, true);
+                }
             });
         });
     }

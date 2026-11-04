@@ -127,11 +127,22 @@ public class PrayerScheduler extends BroadcastReceiver {
     public static final String RING = "@ring";
     /** PREF_PRAYER_PHOTO prefix for a signature design with prayer info ("@sig:2"). */
     public static final String SIG = "@sig:";
+    /** PREF_PRAYER_PHOTO prefix for a vector design with prayer info ("@vec:3"). */
+    public static final String VEC = "@vec:";
 
     public static HryFaces.Face prayerFace(Context c, int w, int h) {
         if (RING.equals(prefs(c).getString(PREF_PRAYER_PHOTO, "")))
             return HryFaces.prayerRing(c, w, h, today(c), System.currentTimeMillis());
         String chosen = prefs(c).getString(PREF_PRAYER_PHOTO, "");
+        if (chosen.startsWith(VEC)) {
+            try {
+                HryFaces.Face f = HrySvgFaces.render(c, Integer.parseInt(chosen.substring(VEC.length())), w, h,
+                        today(c), System.currentTimeMillis());
+                if (f != null)
+                    return f;
+            } catch (NumberFormatException ignored) {
+            }
+        }
         if (chosen.startsWith(SIG)) {
             try {
                 int i = Integer.parseInt(chosen.substring(SIG.length()));
