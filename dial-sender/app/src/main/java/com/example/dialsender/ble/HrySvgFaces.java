@@ -134,8 +134,13 @@ public final class HrySvgFaces {
             c.drawRect(w * 0.28f, bandTop + 2, w * 0.72f, bandTop + 3.2f, rule);
             c.drawRect(w * 0.28f, bandBottom - 3.2f, w * 0.72f, bandBottom - 2, rule);
         }
-        if (info)
+        if (info) {
             HryPremiumFaces.overlayTop(ctx, c, w, times, now);
+            if (d.fill) {
+                // A pattern has nothing of its own below the clock: a plate with the line of the day.
+                DailyWisdom.plate(ctx, c, w, 212, now);
+            }
+        }
         else
             HryFaces.crescent(c, w / 2f, bandTop - 26, 11, HryFaces.foil(w / 2f - 14, bandTop - 40, w / 2f + 14, bandTop - 12));
 

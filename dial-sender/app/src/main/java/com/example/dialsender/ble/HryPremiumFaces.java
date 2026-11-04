@@ -71,6 +71,9 @@ public final class HryPremiumFaces {
             info(c, w, times, now, infoOnTop(index), clock, index == 3 ? 206 : 200);
             if (ctx != null)
                 qibla(ctx, c, index == 2 ? 26 : 14, index == 2 ? 26 : 18);
+            // Minimal Dark and Aurora have an empty top: a short line of the day goes there.
+            if (ctx != null && (index == 3 || index == 4))
+                DailyWisdom.draw(ctx, c, w, 62, now);
         }
         return new HryFaces.Face(b, new int[] { TIME_X, TIME_Y, HryFaces.rgb565(clock), 0, 0 });
     }
