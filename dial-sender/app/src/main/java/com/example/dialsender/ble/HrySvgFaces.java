@@ -88,18 +88,14 @@ public final class HrySvgFaces {
         boolean info = times != null, band = keepsBand(d.bg);
         float bandTop = TIME_Y - 10, bandBottom = TIME_Y + TIME_H + 6;
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        boolean centredMotif = !d.fill && !d.bottom && !d.file.startsWith("bismillah_wide") && !d.file.startsWith("bismillah_arch");
-
-        if (d.fill || centredMotif) {
-            // Pattern or single motif: large and faint behind everything.
-            RectF area = d.fill ? new RectF(0, 0, w, h)
-                    : new RectF(w / 2f - (h * 0.46f), h / 2f - (h * 0.46f), w / 2f + (h * 0.46f), h / 2f + (h * 0.46f));
-            Bitmap mask = inkMask(ctx, d.file, Math.round(area.width()), Math.round(area.height()),
-                    d.fill ? "xMidYMid slice" : "xMidYMid meet");
+        if (d.fill) {
+            // A full pattern, faint behind everything.
+            RectF area = new RectF(0, 0, w, h);
+            Bitmap mask = inkMask(ctx, d.file, w, h, "xMidYMid slice");
             if (mask == null)
                 return null;
             ink(p, d, area);
-            p.setAlpha(d.fill ? 120 : 95);
+            p.setAlpha(120);
             Bitmap layer = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             Canvas lc = new Canvas(layer);
             lc.drawBitmap(mask, area.left, area.top, p);
@@ -116,7 +112,7 @@ public final class HrySvgFaces {
             c.drawBitmap(layer, 0, 0, null);
             layer.recycle();
         } else {
-            // Calligraphy banner or silhouette: along the bottom, under the clock.
+            // Calligraphy, motif or silhouette: crisp, in the space under the clock.
             RectF area = d.bottom ? new RectF(0, bandBottom + 4, w, h)
                     : new RectF(16, bandBottom + 8, w - 16, h - 10);
             Bitmap mask = inkMask(ctx, d.file, Math.round(area.width()), Math.round(area.height()),
@@ -165,21 +161,48 @@ public final class HrySvgFaces {
     private static Bitmap inkMask(Context ctx, String file, int tw, int th, String aspect) {
         try {
             SVG svg = SVG.getFromAsset(ctx.getAssets(), "hryfaces/svg/" + file);
+            // Size the document itself: a viewport alone left large documents unscaled and cropped.
             if (svg.getDocumentViewBox() == null) {
                 float dw = svg.getDocumentWidth(), dh = svg.getDocumentHeight();
                 if (dw > 0 && dh > 0)
                     svg.setDocumentViewBox(0, 0, dw, dh);
             }
+            svg.setDocumentPreserveAspectRatio(com.caverock.androidsvg.PreserveAspectRatio.of(aspect));
+            svg.setDocumentWidth(tw);
+            svg.setDocumentHeight(th);
             Bitmap rgba = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888);
-            svg.renderToCanvas(new Canvas(rgba), new RenderOptions().viewPort(0, 0, tw, th)
-                    .preserveAspectRatio(com.caverock.androidsvg.PreserveAspectRatio.of(aspect)));
+            svg.renderToCanvas(new Canvas(rgba));
             int[] px = new int[tw * th];
             rgba.getPixels(px, 0, tw, 0, 0, tw, th);
+            // A drawing with a coloured backdrop: key that colour out (sampled at the corner).
+            // "Backdrop" = the opaque pixels fill their bounding box; margins from fitting don't count.
+            int minX = tw, minY = th, maxX = -1, maxY = -1, opaque = 0, corner = 0;
+            for (int i = 0; i < px.length; i++) {
+                if (Color.alpha(px[i]) <= 200)
+                    continue;
+                if (opaque++ == 0)
+                    corner = px[i];
+                int x = i % tw, y = i / tw;
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y);
+            }
+            long box = (long) (maxX - minX + 1) * (maxY - minY + 1);
+            boolean keyed = opaque > 0 && opaque > box * 0.92
+                    && (Color.red(corner) + Color.green(corner) + Color.blue(corner)) < 660;
             for (int i = 0; i < px.length; i++) {
                 int v = px[i];
                 float a = Color.alpha(v) / 255f;
-                float luma = (0.299f * Color.red(v) + 0.587f * Color.green(v) + 0.114f * Color.blue(v)) / 255f;
-                float ink = a * Math.min(1f, Math.max(0f, (0.92f - luma) / 0.6f));
+                float ink;
+                if (keyed) {
+                    float dist = Math.abs(Color.red(v) - Color.red(corner)) + Math.abs(Color.green(v) - Color.green(corner))
+                            + Math.abs(Color.blue(v) - Color.blue(corner));
+                    ink = a * Math.min(1f, dist / 150f);
+                } else {
+                    float luma = (0.299f * Color.red(v) + 0.587f * Color.green(v) + 0.114f * Color.blue(v)) / 255f;
+                    ink = a * Math.min(1f, Math.max(0f, (0.92f - luma) / 0.6f));
+                }
                 px[i] = Color.argb(Math.round(ink * 255), 0, 0, 0);
             }
             rgba.setPixels(px, 0, tw, 0, 0, tw, th);
@@ -207,7 +230,7 @@ public final class HrySvgFaces {
                 c.drawRect(0, 0, w, h, p);
                 Paint sun = new Paint(Paint.ANTI_ALIAS_FLAG);
                 sun.setColor(0xFFFFE2A8);
-                c.drawCircle(w * .5f, h * .62f, 26, sun);
+                c.drawCircle(w * .5f, h * .80f, 24, sun);
                 break;
             }
             default: { // NIGHT
