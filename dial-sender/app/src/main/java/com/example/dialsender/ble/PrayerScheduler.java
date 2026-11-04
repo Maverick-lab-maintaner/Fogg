@@ -108,6 +108,11 @@ public class PrayerScheduler extends BroadcastReceiver {
         return PrayerTimes.forDay(Calendar.getInstance(), ll[0], ll[1], prefs(c).getBoolean(PREF_HANAFI, false));
     }
 
+    /** Tomorrow's Fajr, shown as the next prayer once today's five have passed. */
+    public static long tomorrowFajr(Context c) {
+        return tomorrow(c)[PrayerTimes.FAJR];
+    }
+
     private static long[] tomorrow(Context c) {
         double[] ll = location(c);
         Calendar t = Calendar.getInstance();

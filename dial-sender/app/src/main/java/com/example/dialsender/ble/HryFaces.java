@@ -476,6 +476,9 @@ public final class HryFaces {
         int next = -1;
         for (int p : rows)
             if (times[p] > now) { next = p; break; }
+        long nextAt = next >= 0 ? times[next] : PrayerScheduler.tomorrowFajr(ctx);
+        if (next < 0)
+            next = PrayerTimes.FAJR;
         SimpleDateFormat hm = new SimpleDateFormat("HH:mm", Locale.ENGLISH);
         for (int p : rows) {
             double a = Math.toRadians(ang.apply(times[p]));
@@ -500,6 +503,11 @@ public final class HryFaces {
                 nx = Math.max(nx, 3 + tw);
             else
                 nx = Math.max(3 + tw / 2, Math.min(w - 3 - tw / 2, nx));
+            float left = name.getTextAlign() == Paint.Align.LEFT ? nx
+                    : name.getTextAlign() == Paint.Align.RIGHT ? nx - tw : nx - tw / 2;
+            Paint back = new Paint(Paint.ANTI_ALIAS_FLAG);
+            back.setColor(0xD903080F);
+            c.drawRoundRect(new RectF(left - 3, ly - 6, left + tw + 3, ly + 6), 4, 4, back);
             c.drawText(label, nx, ly + 3, name);
         }
 
@@ -514,7 +522,7 @@ public final class HryFaces {
         big.setShader(foil(cx - 55, 0, cx + 55, 0));
         Paint t = font(Typeface.DEFAULT_BOLD, 13, 0xFFFFFFFF, false);
         String nm = next >= 0 ? IslamicDay.name(next, now) : "ALL PRAYED";
-        String tm = next >= 0 ? hm.format(new Date(times[next])) : "";
+        String tm = hm.format(new Date(nextAt));
         float gap = tm.isEmpty() ? 0 : 7, wn = big.measureText(nm), wt = tm.isEmpty() ? 0 : t.measureText(tm);
         float sx = cx - (wn + gap + wt) / 2f;
         c.drawText(nm, sx, 100, big);

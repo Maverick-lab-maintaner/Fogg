@@ -22,7 +22,8 @@ public final class HryPremiumFaces {
     private HryPremiumFaces() {
     }
 
-    public static final String[] NAMES = { "Mihrab Arch", "Night Dome", "Zellige", "Minimal Dark", "Aurora" };
+    public static final String[] NAMES = { "Mihrab Arch", "Night Dome", "Zellige", "Minimal Dark", "Aurora",
+            "Mashrabiya", "Muqarnas", "Black & Gold", "Arabesque Vine" };
     /** The watch's clock block is ~100 px wide (HryFine caps x at 140 on 240 px), so x 70 centres it. */
     private static final int TIME_X = 70, TIME_Y = 100;
 
@@ -55,17 +56,31 @@ public final class HryPremiumFaces {
             case 1: clock = nightDome(c, w, h, info); break;
             case 2: clock = zellige(c, w, h, info); break;
             case 3: clock = minimal(c, w, h, info); break;
-            default: clock = aurora(c, w, h); break;
+            case 4: clock = aurora(c, w, h); break;
+            case 5: clock = mashrabiya(c, w, h); break;
+            case 6: clock = muqarnas(c, w, h); break;
+            case 7: clock = blackGold(c, w, h); break;
+            default: clock = arabesque(c, w, h); break;
         }
         if (info) {
+            // Once today's five have passed, the next prayer is tomorrow's Fajr.
+            if (ctx != null && times[PrayerTimes.ISHA] <= now) {
+                times = times.clone();
+                times[PrayerTimes.FAJR] = PrayerScheduler.tomorrowFajr(ctx);
+            }
             info(c, w, times, now, infoOnTop(index), clock, index == 3 ? 206 : 200);
             if (ctx != null) {   // Qibla, fixed for the location, in the top-left corner
                 Paint q = new Paint(Paint.ANTI_ALIAS_FLAG);
                 q.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
                 q.setTextSize(8.5f);
                 q.setLetterSpacing(0.12f);
-                q.setColor(0xFF8FA3BF);
-                c.drawText(IslamicDay.qibla(ctx), index == 2 ? 26 : 14, index == 2 ? 26 : 18, q);
+                q.setColor(0xFFC9D3E0);
+                String qt = IslamicDay.qibla(ctx);
+                float qx = index == 2 ? 26 : 14, qy = index == 2 ? 26 : 18;
+                Paint qb = new Paint(Paint.ANTI_ALIAS_FLAG);
+                qb.setColor(0xC8000000);   // keeps it readable over patterned designs
+                c.drawRoundRect(new RectF(qx - 5, qy - 10, qx + q.measureText(qt) + 5, qy + 4), 6, 6, qb);
+                c.drawText(qt, qx, qy, q);
             }
         }
         return new HryFaces.Face(b, new int[] { TIME_X, TIME_Y, HryFaces.rgb565(clock), 0, 0 });
@@ -370,6 +385,181 @@ public final class HryPremiumFaces {
         calm.setShader(new RadialGradient(w / 2f, TIME_Y + 44, 120, 0x99070A18, 0x00070A18, Shader.TileMode.CLAMP));
         c.drawRect(0, 0, w, h, calm);
         return 0xFFFFFFFF;
+    }
+
+    // ------------------------------------------------------------ Mashrabiya
+
+    /** Carved wooden lattice around a lit window; warm light behind the clock. */
+    private static int mashrabiya(Canvas c, int w, int h) {
+        Paint bg = new Paint();
+        bg.setShader(new RadialGradient(w / 2f, 150, 190, new int[] { 0xFF8A5220, 0xFF4A2A12, 0xFF170C05 },
+                new float[] { 0f, 0.55f, 1f }, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, w, h, bg);
+
+        Bitmap layer = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas lc = new Canvas(layer);
+        lc.drawColor(0xFF1C0F07);
+        Paint hole = new Paint(Paint.ANTI_ALIAS_FLAG);
+        hole.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+        float s = 20;
+        for (float y = 0; y <= h + s; y += s)
+            for (float x = 0; x <= w + s; x += s) {
+                float ox = ((int) (y / s) % 2 == 0) ? 0 : s / 2;
+                Path d = new Path();
+                d.moveTo(x + ox, y - 7);
+                d.lineTo(x + ox + 7, y);
+                d.lineTo(x + ox, y + 7);
+                d.lineTo(x + ox - 7, y);
+                d.close();
+                lc.drawPath(d, hole);
+            }
+        // the open window in the middle of the screen
+        RectF win = new RectF(24, 84, w - 24, 254);
+        lc.drawRoundRect(win, 18, 18, hole);
+        c.drawBitmap(layer, 0, 0, null);
+        layer.recycle();
+
+        Paint calm = new Paint(Paint.ANTI_ALIAS_FLAG);
+        calm.setColor(0x8C120A05);
+        c.drawRoundRect(win, 18, 18, calm);
+        Paint frame = stroke(1.6f);
+        frame.setShader(HryFaces.foil(0, 0, w, h));
+        c.drawRoundRect(win, 18, 18, frame);
+        Paint mark = new Paint(Paint.ANTI_ALIAS_FLAG);
+        mark.setShader(HryFaces.foil(w / 2f - 8, 0, w / 2f + 8, 0));
+        star8(c, w / 2f, 84, 6, mark);
+        return 0xFFF6E3A1;
+    }
+
+    // ------------------------------------------------------------ Muqarnas
+
+    /** Tiers of pointed honeycomb niches hanging from the top of the screen. */
+    private static int muqarnas(Canvas c, int w, int h) {
+        vertical(c, w, h, 0xFF0E3540, 0xFF03101A);
+        int[] counts = { 4, 6, 8 };
+        float[] tops = { 0, 26, 50 };
+        float[] heights = { 38, 34, 30 };
+        for (int t = 0; t < 3; t++)
+            niches(c, w, counts[t], tops[t], heights[t], false, t);
+        niches(c, w, 8, h - 30, 30, true, 2);
+        vignette(c, w, h, 0x80000000);
+        return 0xFFF6E3A1;
+    }
+
+    private static void niches(Canvas c, int w, int n, float top, float nh, boolean up, int tier) {
+        float nw = w / (float) n;
+        for (int i = -1; i <= n; i++) {
+            float x = i * nw + (tier % 2 == 1 ? nw / 2 : 0);
+            Path p = new Path();
+            if (up) {
+                p.moveTo(x, top + nh);
+                p.lineTo(x, top + nh * 0.55f);
+                p.quadTo(x + nw * 0.12f, top + nh * 0.2f, x + nw / 2, top);
+                p.quadTo(x + nw * 0.88f, top + nh * 0.2f, x + nw, top + nh * 0.55f);
+                p.lineTo(x + nw, top + nh);
+            } else {
+                p.moveTo(x, top);
+                p.lineTo(x, top + nh * 0.45f);
+                p.quadTo(x + nw * 0.12f, top + nh * 0.8f, x + nw / 2, top + nh);
+                p.quadTo(x + nw * 0.88f, top + nh * 0.8f, x + nw, top + nh * 0.45f);
+                p.lineTo(x + nw, top);
+            }
+            p.close();
+            Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+            fill.setShader(new LinearGradient(0, top, 0, top + nh, up ? 0xFF0B2A33 : 0xFF2C7078,
+                    up ? 0xFF2C7078 : 0xFF0B2A33, Shader.TileMode.CLAMP));
+            c.drawPath(p, fill);
+            Paint edge = stroke(1.1f);
+            edge.setShader(HryFaces.foil(x, top, x + nw, top + nh));
+            c.drawPath(p, edge);
+        }
+    }
+
+    // ------------------------------------------------------------ Black & Gold
+
+    /** Star-and-cross mosaic in black with gold outlines, opening to a plain panel. */
+    private static int blackGold(Canvas c, int w, int h) {
+        c.drawColor(0xFF060606);
+        Bitmap layer = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas lc = new Canvas(layer);
+        Paint line = stroke(1.1f);
+        line.setShader(HryFaces.foil(0, 0, w, h));
+        Paint tile = new Paint(Paint.ANTI_ALIAS_FLAG);
+        tile.setColor(0xFF1C1608);
+        float s = 30;
+        for (float y = 0; y < h + s; y += s)
+            for (float x = 0; x < w + s; x += s) {
+                star8(lc, x, y, s * 0.42f, tile);
+                star8Outline(lc, x, y, s * 0.5f, line);
+            }
+        Paint clear = new Paint(Paint.ANTI_ALIAS_FLAG);
+        clear.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+        RectF panel = new RectF(16, 84, w - 16, 256);
+        lc.drawRoundRect(panel, 16, 16, clear);
+        c.drawBitmap(layer, 0, 0, null);
+        layer.recycle();
+        Paint frame = stroke(1.6f);
+        frame.setShader(HryFaces.foil(0, 0, w, h));
+        c.drawRoundRect(panel, 16, 16, frame);
+        Paint thin = stroke(0.8f);
+        thin.setShader(HryFaces.foil(0, 0, w, h));
+        c.drawRoundRect(new RectF(panel.left + 4, panel.top + 4, panel.right - 4, panel.bottom - 4), 13, 13, thin);
+        return 0xFFF6E3A1;
+    }
+
+    // ------------------------------------------------------------ Arabesque Vine
+
+    /** Gold vine scrolls in the four corners, on deep green. */
+    private static int arabesque(Canvas c, int w, int h) {
+        Paint bg = new Paint();
+        bg.setShader(new RadialGradient(w / 2f, h / 2f, h * 0.72f, 0xFF0F3D2E, 0xFF03130D, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, w, h, bg);
+        Paint vine = stroke(1.5f);
+        vine.setStrokeCap(Paint.Cap.ROUND);
+        vine.setShader(HryFaces.foil(0, 0, w, h));
+        Paint leaf = new Paint(Paint.ANTI_ALIAS_FLAG);
+        leaf.setShader(HryFaces.foil(0, 0, w, h));
+        for (int k = 0; k < 4; k++) {
+            c.save();
+            if (k % 2 == 1)
+                c.scale(-1, 1, w / 2f, h / 2f);
+            if (k >= 2) {
+                c.scale(1, -1, w / 2f, h / 2f);
+                c.scale(0.66f, 0.66f);   // smaller at the bottom, clear of the date line
+            }
+            corner(c, vine, leaf);
+            c.restore();
+        }
+        return 0xFFF6E3A1;
+    }
+
+    private static void corner(Canvas c, Paint vine, Paint leaf) {
+        Path main = new Path();
+        main.moveTo(8, 92);
+        main.cubicTo(8, 40, 40, 10, 96, 10);
+        c.drawPath(main, vine);
+        Path s1 = new Path();
+        s1.moveTo(24, 46);
+        s1.cubicTo(44, 42, 56, 58, 44, 68);
+        s1.cubicTo(36, 74, 28, 66, 34, 60);
+        c.drawPath(s1, vine);
+        Path s2 = new Path();
+        s2.moveTo(50, 22);
+        s2.cubicTo(74, 24, 84, 40, 70, 46);
+        s2.cubicTo(62, 49, 56, 42, 62, 37);
+        c.drawPath(s2, vine);
+        float[][] leaves = { { 13, 62, 30 }, { 20, 38, -20 }, { 38, 20, 40 }, { 78, 12, 80 }, { 96, 10, 90 }, { 8, 92, 180 } };
+        for (float[] l : leaves) {
+            c.save();
+            c.translate(l[0], l[1]);
+            c.rotate(l[2]);
+            Path p = new Path();
+            p.moveTo(0, 0);
+            p.quadTo(5, -7, 0, -13);
+            p.quadTo(-5, -7, 0, 0);
+            c.drawPath(p, leaf);
+            c.restore();
+        }
     }
 
     // ------------------------------------------------------------ helpers
