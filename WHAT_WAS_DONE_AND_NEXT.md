@@ -1006,3 +1006,57 @@ Open-source starting points for the Waveshare: waveshareteam/ESP32-S3-Touch-AMOL
 ### 8. What Worked, What Did Not
 - Worked: safe reverts (rescue first try, STABLE); preview review caught the Zellige busy band and the ring label clipping before the owner saw them; Prayer Ring typography was praised: "writing on prayer ring was good and high quaity".
 - Did not: S1 background swap ("watvh keeps going on and off"); the watch's built-in digits remain the weakest visual element.
+
+## Phase 14 — Four more designs, vector faces rebuilt, daily line, 15-minute prayer reminder (2026-11-04, ~12:10–13:45)
+
+### 1. Chronological Timeline
+- Owner resumed. Pinterest pins were not reachable by web search, so ideas came from Islamic ornament references and product designs. Proposed Mashrabiya, Muqarnas, Black & Gold, Arabesque Vine; owner: "is plug proceed".
+- Preview review of the ring and signature designs found two things, both fixed: after Isha faces said "ISHA PRAYED" (now tomorrow's Fajr), and ring side labels touched the ring (now on a dark backing).
+- Four designs built and reviewed; QIBLA got a dark backing and the bottom vines were shrunk off the date line. Sent OK: Mashrabiya (87.5 KB, ~14 s), Arabesque Vine (72 KB, ~11 s; owner: "is good"), Black & Gold (86.6 KB, ~14 s; owner: "is great").
+- Owner: "lets extend this to vector designs and remove the central bands exerpt with the blue and brown ones"; confirmed "yeah exactly and push is to github after commiting step by step".
+- Preview review caught most vector faces broken (art cropped or oversized, faint motifs fighting the text). Fixed in three passes: explicit SVG document sizing, ornaments under the clock, backdrop keying. Bismillah Night sent OK (74 KB, ~13 s); owner: "is good".
+- Owner proposed a short profound line in Arabic and English on faces without art, e.g. the warning against "sawfa". The wording and source could not be verified, so a plain unattributed maxim (إياك والتسويف) is used alongside whole verses. Owner: "we can extend this to prayer facess too". Done for both photo layouts.
+- Star Lattice, Prayer Ring and a mosque photo face all transferred cleanly (82 KB, 74 KB, 80.5 KB).
+- Owner asked for a prompt 15 minutes before each prayer: built. Owner noticed one verse only; a per-prayer rotation was tried, then owner: "let it be verse one perday", so it was reverted.
+
+### 2. Technical Architecture Evolution
+- `HryPremiumFaces`: Mashrabiya, Muqarnas, Black & Gold, Arabesque Vine; `qibla()` helper; `overlayTop()` for other face families.
+- `HrySvgFaces`: `render(ctx, i, w, h, times, now)`; document sized with `setDocumentWidth/Height` + `setDocumentPreserveAspectRatio` (a RenderOptions viewport left art unscaled); only full patterns sit behind the clock, all other art is a crisp ornament below it; band only on blue/brown (`keepsBand`); backdrop keying by bounding-box coverage > 92% and first opaque colour; darker Mosque Sunset sky, sun lower.
+- `PrayerScheduler`: `VEC` prefix ("@vec:N"), `tomorrowFajr()`, calls `PrayerPreAlert.schedule()` from `schedule()`.
+- New `ble/DailyWisdom.java`: one line a day by day-of-year, 8 lines; `draw()` and `plate()`.
+- New `ble/PrayerPreAlert.java` (receiver in the manifest): exact alarm 15 min before each prayer, on by default, switch in Prayer times; message via the `.prayer` package (type 1).
+- `HryFacesActivity`: previews saved as `cache/vector_N.png` and `cache/photo_<file>.png`.
+
+### 3. Rejected Paths and Why
+- **Large faint motifs behind the clock:** they fought with the text and got cut up by clearing.
+- **Attributing the "sawfa" saying:** unverified, so no name is given. Only whole verses from the asset are quoted; text is never typed by hand.
+- **Changing the verse after each prayer:** owner preferred one per day.
+
+### 4. Current Source-of-Truth Workflow
+- Every visual change: build → install → owner opens Watch faces → pull `cache/*.png` with `adb exec-out run-as com.example.dialsender cat cache/<file>` → composite the clock box → fix → only then send.
+- Always wrap adb calls in `timeout`: with no phone plugged in, `adb shell` hangs past the 2-minute tool limit.
+
+### 5. Commit/Milestone Map
+- `25362c1` four new signature designs, tomorrow's Fajr after Isha
+- `0add1b9` shared prayer block and Qibla helper
+- `6f2a280` prayer info on vector designs, band only on blue and brown
+- `cf6ad00` vector art fits its space, motifs under the clock
+- `5aed3a4` daily line on faces with free space
+- `9372749` daily line on photo prayer faces
+- `8ae97c5` 15-minute prayer reminder
+- This docs entry.
+
+### 6. Next-Step Guidance
+1. Confirm the 15-minute reminder arrives on the watch (next armed for Asr, 14:25 on 2026-11-04).
+2. Owner's stored `quran_lang` is 0 (Arabic + English), so after-prayer verses go as two messages, the Arabic unreadable on the watch; owner chose to leave it as is.
+3. Pinterest ideas if the owner shares pins or screenshots. Exact "sawfa" wording if a source turns up.
+4. Friday, Ramadan and Eid wording untested until those dates.
+
+### 7. Every Twist, Turn, and Tool Chain
+- Keying first failed because `px[0]` was the empty letterbox margin, not the artwork; coverage of the opaque bounding box fixed it.
+- The face log shows sizes, not names, so transfers are matched by order.
+- The session scratchpad moved; the Python env is still under the older `C--WINDOWS-mysecurity` temp folder and should move into `tools/` before it is cleaned up.
+
+### 8. What Worked, What Did Not
+- Worked: every face type now transfers and displays; the preview review caught real faults before the owner saw them. Owner: "is good keep it up", "is great".
+- Did not: first vector pass was badly cropped; those faces had been shipped earlier without review, which explains the owner's earlier "ok not good or nor great".
