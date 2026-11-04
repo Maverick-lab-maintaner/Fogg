@@ -193,6 +193,11 @@ public class HryFacesActivity extends AppCompatActivity {
                     if (src == null) return;
                     Bitmap bm = p.prayer() ? PrayerScheduler.prayerPhotoFace(this, src, wh[0], wh[1], times, now).image
                             : HryFaces.photo(src, wh[0], wh[1]).image;
+                    if (p.prayer())
+                        try (java.io.FileOutputStream o = new java.io.FileOutputStream(new java.io.File(getCacheDir(), "photo_" + p.file + ".png"))) {
+                            bm.compress(Bitmap.CompressFormat.PNG, 100, o);
+                        } catch (java.io.IOException ignored) {
+                        }
                     runOnUiThread(() -> {
                         img.setScaleType(ImageView.ScaleType.CENTER_CROP);
                         img.setImageBitmap(bm);

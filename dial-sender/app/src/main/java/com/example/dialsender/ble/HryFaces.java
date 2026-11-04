@@ -416,6 +416,7 @@ public final class HryFaces {
             t.setTextAlign(Paint.Align.CENTER);
             c.drawText(hm.format(new Date(times[r])), cx, bar.top + 63, t);
         }
+        DailyWisdom.plate(ctx, c, w, 132, now);
         return new Face(b, clock(0xFFFFFFFF, 0));
     }
 
@@ -616,6 +617,7 @@ public final class HryFaces {
             c.drawText(PrayerTimes.NAMES[r].substring(0, Math.min(4, PrayerTimes.NAMES[r].length())).toUpperCase(Locale.ENGLISH)
                     + " " + hm.format(new Date(times[r])), cx, h - 20, t);
         }
+        DailyWisdom.plate(ctx, c, w, 132, now);
         return new Face(b, clock(0xFFFFFFFF, 0));
     }
 
