@@ -69,21 +69,35 @@ public final class HryPremiumFaces {
                 times[PrayerTimes.FAJR] = PrayerScheduler.tomorrowFajr(ctx);
             }
             info(c, w, times, now, infoOnTop(index), clock, index == 3 ? 206 : 200);
-            if (ctx != null) {   // Qibla, fixed for the location, in the top-left corner
-                Paint q = new Paint(Paint.ANTI_ALIAS_FLAG);
-                q.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-                q.setTextSize(8.5f);
-                q.setLetterSpacing(0.12f);
-                q.setColor(0xFFC9D3E0);
-                String qt = IslamicDay.qibla(ctx);
-                float qx = index == 2 ? 26 : 14, qy = index == 2 ? 26 : 18;
-                Paint qb = new Paint(Paint.ANTI_ALIAS_FLAG);
-                qb.setColor(0xC8000000);   // keeps it readable over patterned designs
-                c.drawRoundRect(new RectF(qx - 5, qy - 10, qx + q.measureText(qt) + 5, qy + 4), 6, 6, qb);
-                c.drawText(qt, qx, qy, q);
-            }
+            if (ctx != null)
+                qibla(ctx, c, index == 2 ? 26 : 14, index == 2 ? 26 : 18);
         }
         return new HryFaces.Face(b, new int[] { TIME_X, TIME_Y, HryFaces.rgb565(clock), 0, 0 });
+    }
+
+    /** Qibla, fixed for the location, on a small dark backing so it reads over any design. */
+    private static void qibla(android.content.Context ctx, Canvas c, float qx, float qy) {
+        Paint q = new Paint(Paint.ANTI_ALIAS_FLAG);
+        q.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        q.setTextSize(8.5f);
+        q.setLetterSpacing(0.12f);
+        q.setColor(0xFFC9D3E0);
+        String qt = IslamicDay.qibla(ctx);
+        Paint qb = new Paint(Paint.ANTI_ALIAS_FLAG);
+        qb.setColor(0xC8000000);
+        c.drawRoundRect(new RectF(qx - 5, qy - 10, qx + q.measureText(qt) + 5, qy + 4), 6, 6, qb);
+        c.drawText(qt, qx, qy, q);
+    }
+
+    /** The prayer block above the clock, for faces built elsewhere (vector designs). */
+    static void overlayTop(android.content.Context ctx, Canvas c, int w, long[] times, long now) {
+        fonts(ctx);
+        if (times[PrayerTimes.ISHA] <= now) {
+            times = times.clone();
+            times[PrayerTimes.FAJR] = PrayerScheduler.tomorrowFajr(ctx);
+        }
+        info(c, w, times, now, true, 0xFFF6E3A1, 200);
+        qibla(ctx, c, 14, 18);
     }
 
     private static android.graphics.Typeface cinzel, amiri;
