@@ -221,6 +221,7 @@ public class PrayerScheduler extends BroadcastReceiver {
 
     /** (Re)arm the alarm for the next prayer, or 00:01 when today's are done. */
     public static void schedule(Context c) {
+        PrayerPreAlert.schedule(c);
         SharedPreferences p = prefs(c);
         AlarmManager am = c.getSystemService(AlarmManager.class);
         PendingIntent cancel = pending(c, -1);

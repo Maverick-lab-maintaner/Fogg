@@ -116,6 +116,9 @@ public class HryFacesActivity extends AppCompatActivity {
         pt.addView(timesView);
         pt.addView(divider());
         pt.addView(toggle("Prayer alerts on the watch", PrayerScheduler.PREF_ALERTS));
+        if (!prefs.contains(com.example.dialsender.ble.PrayerPreAlert.PREF))
+            prefs.edit().putBoolean(com.example.dialsender.ble.PrayerPreAlert.PREF, true).apply();
+        pt.addView(toggle("Remind me 15 minutes before each prayer", com.example.dialsender.ble.PrayerPreAlert.PREF));
         pt.addView(toggle("Keep the prayer face up to date", PrayerScheduler.PREF_FACE_AUTO));
         pt.addView(toggle("Hanafi Asr (later Asr time)", PrayerScheduler.PREF_HANAFI));
         pt.addView(toggle("Clean layout (light panel)", PrayerScheduler.PREF_CLEAN));
