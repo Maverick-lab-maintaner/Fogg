@@ -23,7 +23,7 @@ public final class QuranReminders {
     /** 0 = Arabic then English, 1 = English only, 2 = Arabic only. */
     public static final String PREF_LANG = "quran_lang";
     public static final String[] LANG_NAMES = { "Arabic + English", "English only", "Arabic only" };
-    /** English only: the H19 firmware cannot render Arabic script. */
+    /** English by default; Arabic works on the H19 once converted (ArabicVisual). */
     public static final int DEFAULT_LANG = 1;
     private static final String PREF_INDEX = "quran_index";
     private static final String PKG = "com.example.dialsender.quran";
@@ -91,12 +91,19 @@ public final class QuranReminders {
         if (v == null)
             return false;
         int lang = prefs(c).getInt(PREF_LANG, DEFAULT_LANG);
-        String title = "Quran " + v.ref;
+        // The watch treats the first colon as the end of the title, so "6:162" would be cut to "6".
+        String title = "Quran " + v.ref.replace(':', '.');
         Handler h = new Handler(Looper.getMainLooper());
         long t = delayMs;
         if (lang != 1) {
-            h.postDelayed(() -> ble.sendNotification(127, title, v.arabic, PKG), t);
-            t += 5000;
+            // Joined letters take 3 bytes each, so a long verse goes as whole-word parts.
+            java.util.List<String> parts = ArabicVisual.split(v.arabic, 196 - (title + " (1/2):").length() - 1);
+            for (int i = 0; i < parts.size(); i++) {
+                String part = parts.get(i);
+                String head = parts.size() == 1 ? title : title + " (" + (i + 1) + "/" + parts.size() + ")";
+                h.postDelayed(() -> ble.sendNotification(127, head, part, PKG), t);
+                t += 5000;
+            }
         }
         if (lang != 2)
             h.postDelayed(() -> ble.sendNotification(127, title, v.english, PKG), t);
@@ -105,6 +112,6 @@ public final class QuranReminders {
 
     /** How long {@link #send} keeps the link busy, so a face transfer can wait for it. */
     public static long busyMs(Context c) {
-        return prefs(c).getInt(PREF_LANG, DEFAULT_LANG) == 0 ? 8000 : 3000;
+        return prefs(c).getInt(PREF_LANG, DEFAULT_LANG) == 1 ? 3000 : 14000;
     }
 }

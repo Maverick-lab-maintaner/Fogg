@@ -152,7 +152,7 @@ public class HryFacesActivity extends AppCompatActivity {
                 }).show());
         TextView sendVerse = button("Send a verse now", true, v -> Toast.makeText(this,
                 QuranReminders.send(this, 0) ? "Verse sent" : "Connect the watch first", Toast.LENGTH_SHORT).show());
-        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        LinearLayout.LayoutParams half =new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         half.topMargin = dp(14);
         LinearLayout.LayoutParams half2 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         half2.topMargin = dp(14);
@@ -160,8 +160,7 @@ public class HryFacesActivity extends AppCompatActivity {
         qButtons.addView(lang, half);
         qButtons.addView(sendVerse, half2);
         qr.addView(qButtons);
-        qr.addView(note("Your watch cannot show Arabic letters, so English is the default. "
-                + "Arabic: Tanzil Quran Text (CC BY 3.0). English: Pickthall (1930, public domain)."));
+        qr.addView(note("Arabic: Tanzil Quran Text (CC BY 3.0). English: Pickthall (1930, public domain)."));
 
         // Self-compiled "live" dials are deliberately not offered: they crashed the
         // H19 into its bootloader four times (see WHAT_WAS_DONE_AND_NEXT.md, Phases 3–5).
