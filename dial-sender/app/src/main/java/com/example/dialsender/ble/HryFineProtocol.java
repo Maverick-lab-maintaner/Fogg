@@ -374,9 +374,18 @@ final class HryFineProtocol {
 
     /** [type, 0, 0] + UTF-8 "title:content", capped at 196 bytes on a character boundary. */
     static byte[] messagePush(int type, String title, String content) {
-        String text = (title == null || title.isEmpty()) ? (content == null ? "" : content)
-                : title + ":" + (content == null ? "" : content);
-        byte[] body = utf8Prefix(text, 196);
+        // The H19 needs Arabic pre-shaped and in display order. Cut by whole words first:
+        // cutting after reordering would drop the beginning of the sentence.
+        String head = title == null || title.isEmpty() ? "" : (ArabicVisual.hasArabic(title)
+                ? ArabicVisual.flat(title) : title) + ":";
+        String tail = content == null ? "" : content;
+        if (ArabicVisual.hasArabic(tail)) {
+            if (!head.isEmpty())
+                head += ' ';
+            tail = ArabicVisual.visual(ArabicVisual.fit(tail,
+                    196 - head.getBytes(StandardCharsets.UTF_8).length));
+        }
+        byte[] body = utf8Prefix(head + tail, 196);
         byte[] p = new byte[body.length + 3];
         p[0] = (byte) type;
         System.arraycopy(body, 0, p, 3, body.length);
