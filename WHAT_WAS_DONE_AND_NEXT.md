@@ -1126,3 +1126,57 @@ Open-source starting points for the Waveshare: waveshareteam/ESP32-S3-Touch-AMOL
 - Did not: fixing from descriptions alone. Owner: "didnt appear correctly", then "you seem that you cannot do it". Asking for a photo sooner would have saved at least two rounds.
 - Did not: a test whose answer could be read two ways (T1). Tests should make each outcome look different.
 - Accepted limit: gaps are about twice a normal space, and tiny dashes remain.
+
+---
+
+## Phase 16 — Verse moved to 10 minutes after prayer, held 15-minute reminder (2026-11-05, ~13:35–13:50)
+
+Status when written (13:49): installed and armed, **not yet proven on the watch and not yet committed**. See section 6.
+
+### 1. Chronological Timeline
+- Owner: "yest i got the 15minutes prayer notification and even today but but i think i didnt get it this after because we were working on it". This confirms the Phase 14 open item: the 15-minute reminder reaches the watch.
+- Cause judged very likely but not proven, because the log was gone: `PrayerPreAlert.onReceive` only sent if the session was ready at that moment, and the morning's installs kept dropping the watch.
+- Offered holding the reminder for the reconnect. Owner: "yes add it after the 14:23 check and lets on send one quran version 10minutes after prayer time, by then which is finish so that i can look it, if is sent during prayers i can;t check it".
+- ~13:45 both changes built, not installed. A background job was set to read the log at 14:24.
+- Owner: "install the update, i dont see why we should wait". Installed 13:47:19, ahead of the 14:23 check, at the owner's direction.
+- Fogg did not restart by itself, and no verse alarm was armed. Owner was asked to open it: "openned". At 13:48:38 Fogg was connected and the phone showed `PRAYER_PRE` 14:23, `PRAYER_TICK` 14:38, `PRAYER_VERSE` 14:48.
+
+### 2. Technical Architecture Evolution
+- `ble/PrayerPreAlert.java` now owns both prayer-timed messages. `arm()` sets one alarm at the next prayer plus an offset: reminder at -15 min (request code 4714, action `PRAYER_PRE`), verse at +10 min (4715, action `PRAYER_VERSE`, no manifest change because the same receiver takes both).
+- Held reminder: if the session is not ready, `prayer_pre_held` and `prayer_pre_held_at` are stored. `flush()` runs 5 s into `PrayerScheduler.onWatchConnected`, about 9 s after the session is ready, and sends the real time left ("In 6 minutes"). It drops the reminder if the prayer has started or under a minute is left.
+- Both senders wait while `BleManager.isBusy()`: up to 6 retries, 20 s apart, then send anyway.
+- `PrayerScheduler.onReceive` no longer sends a verse; the face push always runs 3 s after the prayer tick.
+- `HryFacesActivity` switch label: "Send a verse 10 minutes after each prayer".
+
+### 3. Rejected Paths and Why
+- **Verse at prayer time:** owner: "if is sent during prayers i can;t check it".
+- **Sending a held reminder late:** a reminder after the prayer has started is useless, so it is dropped.
+- **Holding the verse too:** not requested. A verse missed while disconnected is skipped; the next prayer's verse still comes.
+
+### 4. Current Source-of-Truth Workflow
+- To see armed alarms: `adb shell dumpsys alarm | grep -A1 "dialsender.PRAYER"`, then read `origWhen=`.
+- After installing, ask the owner to open Fogg. Do not assume it restarts. A new alarm type is only armed once `PrayerScheduler.schedule` runs.
+- Prayer sends can be read safely with `grep "pkg=com.example.dialsender.prayer"`. Never grep notification lines without that filter: other titles are contact names.
+
+### 5. Commit/Milestone Map
+- No code commit yet. `HryFacesActivity`, `ble/PrayerPreAlert.java` and `ble/PrayerScheduler.java` are modified and uncommitted, held until the 14:23 and 14:48 messages are confirmed.
+- APK installed on the phone 13:47:19, built from that uncommitted code.
+- This docs entry.
+
+### 6. Next-Step Guidance
+1. Confirm from the owner and the log: reminder at 14:23, verse at 14:48 (Asr is 14:38). A background job reads the log at about 14:24.
+2. If both arrive, commit step by step, run the proprietary check and push to `fork h19-hryfine-support`.
+3. The held-reminder path has not run at all. To prove it, the watch must be disconnected when a reminder is due, then reconnected before the prayer.
+4. Find out why Fogg did not restart after the update. `BootReceiver` handles `MY_PACKAGE_REPLACED`, but about 25 s after install the process was not running, the verse alarm was not armed and no service was listed. MIUI restrictions are a guess, not a finding.
+5. Correction to Phase 15, section 6, item 1: the stored `quran_lang` is 0, Arabic + English, not Arabic only. Each verse goes as its Arabic part or parts, then the English.
+
+### 7. Every Twist, Turn, and Tool Chain
+- The owner's "one quran version" was read as one verse per prayer, which it already was; both languages of that verse still go when `quran_lang` is 0.
+- A long `/update-doc` shell command failed with "unexpected EOF while looking for matching `'`" and wrote nothing. Checked first, then redone by writing text to scratchpad files with the Write tool and appending with `cat`.
+- The existing 14:23 alarm survived the install. That is why the phone looked fine while the new verse alarm was missing: survival of old alarms says nothing about new ones.
+
+### 8. What Worked, What Did Not
+- Worked: the owner's own observation pointed straight at the fault. Owner on the reminder: "yest i got the 15minutes prayer notification and even today".
+- Worked: checking `dumpsys alarm` after install, which caught the missing verse alarm before any prayer depended on it.
+- Did not: telling the owner that Fogg would reconnect after the update and re-set its reminders. That was read from code, not tested, and it did not happen. Also wrongly stated the language was Arabic only without reading the stored value.
+- Not yet known: whether the 14:23 and 14:48 messages arrive.
