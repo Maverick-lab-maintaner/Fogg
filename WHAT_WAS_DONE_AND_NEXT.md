@@ -1060,3 +1060,69 @@ Open-source starting points for the Waveshare: waveshareteam/ESP32-S3-Touch-AMOL
 ### 8. What Worked, What Did Not
 - Worked: every face type now transfers and displays; the preview review caught real faults before the owner saw them. Owner: "is good keep it up", "is great".
 - Did not: first vector pass was badly cropped; those faces had been shipped earlier without review, which explains the owner's earlier "ok not good or nor great".
+
+---
+
+## Phase 15 — Arabic messages finally read correctly on the watch (2026-11-05, ~10:00–13:35)
+
+### 1. Chronological Timeline
+- Started from the owner's report: "now when the message is sent in arabic, it reads from left to right". A four-way test had already shown joined letters plus reversed order (test C) was best, and long verses went as parts. Owner then reported: "1/2 was ok but starting readng from the bottom, but 2/2 was were is suppose to be". The owner set the verse language to Arabic only for testing.
+- ~10:01 first line-by-line fix installed: 22 letters per line, each flipped alone, joined with a line feed. Owner: "what i sent right now, didnt appear correctly". The phone log no longer held the send, so the cause could not be read from logs.
+- ~11:03 layout test T1/T2/T3 (line feed, ruler without spaces, ruler with spaces). Owner: "t3, i can see 1 from left and 2 to the right and nine at the bottom". This was misread as "13 characters fit a row".
+- ~11:08 limit changed to 13. Owner on 6:162: "reads on Quran 6, from the le, not arrange properly middle section misplaced", and asked where the verses come from and "cant you just copy the verse and paste to make it easier".
+- ~11:37 three-layout test, including one word per row. Owner: "you seem that you cannot do it but check this", with a photo. The photo overturned the earlier assumptions: line feeds are dropped, a row holds about 26 letters, unbroken text is cut mid-word, and "6:162" was losing everything after the first colon.
+- ~13:08 four ways of forcing a row (CR, CRLF, U+2028, padding with spaces); photos of all four. CR and CRLF were ignored, U+2028 drew a box, and the padded version showed the watch wraps at plain spaces and keeps words whole, but padding dragged the last word down.
+- ~13:16 four non-breaking blanks tested as glue inside a row (U+00A0, U+3000, U+2003, U+2002). Owner: "B is the corrected on all the rest are missaraanged". B is U+3000.
+- ~13:22 built into the app, test button removed. A failed Edit left the first build without the protocol change; caught and rebuilt, then confirmed in the compiled class.
+- ~13:30 owner's photo of 7:199 read correctly. Owner: "is ok, tell me is space too wide or ok". Answer: a little wide, but fixed by that character. Committed in two steps and pushed.
+
+### 2. Technical Architecture Evolution
+- New `ble/ArabicVisual.java`: `shape()` swaps letters for presentation forms (U+FE70–FEFF), `reorder()` uses `java.text.Bidi`, `row()` builds one unbreakable row, `visual()` lays out rows, `flat()` handles short text such as a title, `fit()` and `split()` cut by whole words.
+- Row rules: `GLUE` = U+3000 between words in a row; plain space between rows; `ROW_MAX` 20 and `ROW_MIN` 16, in letters with a glue space counted as two. Short rows are padded with glue so two rows can never share one screen row.
+- `HryFineProtocol.messagePush`: any Arabic title or body is converted; a plain space separates the title from the Arabic.
+- `QuranReminders.send`: Arabic goes as numbered whole-word parts 5 s apart; title uses `6.162`, not `6:162`; `busyMs` is 14 s unless the language is English only.
+- `HryFacesActivity`: removed the note saying the watch cannot show Arabic. All temporary test code was removed before commit.
+
+### 3. Rejected Paths and Why
+- **Sending the verse as stored ("copy and paste"):** the watch does not join letters or read right to left. The stored text is already verbatim Tanzil; only its encoding for display changes.
+- **Reversing the whole verse:** the watch wraps top to bottom, so the end of the verse landed on the top row.
+- **Line feed, CR, CRLF, U+2028:** dropped or drawn as a box. No line-break character works in H19 messages.
+- **Padding rows with plain spaces:** when the row overflows inside the padding, the watch moves the row's last word down.
+- **U+00A0, U+2003, U+2002 as glue:** owner: "all the rest are missaraanged".
+- **One short message per row:** kept as a fallback, not needed.
+
+### 4. Current Source-of-Truth Workflow
+- Any Arabic to the H19 goes through `ArabicVisual.visual()`. Never add line-feed based layout.
+- Never put a colon in a message title: the watch ends the title at the first colon.
+- Budget 3 bytes per Arabic letter and per glue space against the 196-byte limit.
+- For anything drawn by the watch, ask the owner for a photo early and zoom it (crop, enlarge, autocontrast) before forming a theory. Logs show what was sent, not what was drawn.
+- Compare options on the same real text, labelled A, B, C, and let the owner pick.
+
+### 5. Commit/Milestone Map
+- `7464a9c` feat(hryfine): show Arabic messages correctly on the H19 (`ArabicVisual`, `HryFineProtocol`)
+- `db1a004` feat(hryfine): send Arabic verses in whole-word parts (`QuranReminders`, `HryFacesActivity`)
+- Both pushed to `fork h19-hryfine-support`; proprietary file check clean.
+- This docs entry.
+
+### 6. Next-Step Guidance
+1. Owner's verse language is still Arabic only from testing; the owner can change it with the language button beside "Send a verse now".
+2. Arabic in other apps' notifications uses the same layout but is untested. Messages with Latin words or digits inside Arabic may need checking.
+3. Tiny dashes appear near U+3000 gaps. They seem to come from that character in the watch font and could not be removed without losing the fix.
+4. Of the 75 verses, 35 go as one Arabic message and 40 as two, at most 4 rows each (estimated by script from the same rules).
+5. Still open from Phase 14: confirm the 15-minute reminder arrives; Friday, Ramadan and Eid wording; Pinterest ideas; exact "sawfa" wording.
+
+### 7. Every Twist, Turn, and Tool Chain
+- Two earlier theories were wrong: that the watch honoured line feeds (never proven by T1, whose answer was ambiguous) and that a row held 13 letters.
+- A separate suspicion, that the line counter included vowel marks, was checked and false: the verse file has none.
+- Wrap rule seen on the watch: break at a plain space and keep words whole; a run with no space is cut at the screen edge; overflow inside a run of spaces moves the previous word down.
+- `imgenv` Python was usable at ~13:06 and returned "Permission denied" at ~13:14, so a patch script silently did not apply and the old APK was reinstalled. Use the Edit tool, or the uv Python at `C:\Users\MAVERIX\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\python.exe`.
+- Parallel Edit calls can fail on a file not read in this context while later commands still run. Check each result, then confirm the change in the compiled class.
+- `adb logcat` on this phone keeps little of Fogg's history; the send being investigated had already gone.
+- Owner's photos live on the Desktop and in WhatsApp Desktop's transfers folder; they are not in the repo.
+
+### 8. What Worked, What Did Not
+- Worked: photos and the labelled A/B/C/D comparisons. The first photo did more than three rounds of guessing. Owner's final check: "is ok".
+- Worked: zooming the photo before reasoning about it.
+- Did not: fixing from descriptions alone. Owner: "didnt appear correctly", then "you seem that you cannot do it". Asking for a photo sooner would have saved at least two rounds.
+- Did not: a test whose answer could be read two ways (T1). Tests should make each outcome look different.
+- Accepted limit: gaps are about twice a normal space, and tiny dashes remain.
